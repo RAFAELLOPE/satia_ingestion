@@ -2,7 +2,7 @@ import requests
 import json
 import pandas as pd
 from datetime import datetime
-
+import os
 
     
 def transform_component_list(data:dict) -> pd.DataFrame:
@@ -39,8 +39,52 @@ def get_componet_list(api_key:str, site_id:str) -> pd.DataFrame:
     
     return df
 
-def transform_inverter_data(data:dict):
-    pass
+def transform_inverter_data(data:dict) -> pd.DataFrame:
+    data = data['data']
+    df_dict = {"datetime":[],
+               "total_active_power":[],
+               "dc_voltage":[],
+               "power_limit_perc":[],
+               "total_energy":[],
+               "internal_temp":[],
+               "inverter_mode":[],
+               "operation_mode":[],
+               "vL1To2":[],
+               "vL2To3":[],
+               "vL3To1":[]}
+    
+    for l in ["L1", "L2", "L3"]:
+        df_dict[f"ac_current_{l}"] = []
+        df_dict[f"ac_voltage_{l}"] = []
+        df_dict[f"ac_frequency_{l}"] = []
+        df_dict[f"apparent_power_{l}"] = []
+        df_dict[f"active_power_{l}"] = []
+        df_dict[f"reactive_power_{l}"] = []
+        df_dict[f"cos_phi_{l}"] = []
+
+    for i in range(data['count']):
+        df_dict["datetime"].append(data['telemetries'][i]['date'])
+        df_dict["total_active_power"].append(data['telemetries'][i]['totalActivePower'])
+        df_dict["dc_voltage"].append(data['telemetries'][i]['dcVoltage'])
+        df_dict["power_limit_perc"].append(data['telemetries'][i]['powerLimit'])
+        df_dict["total_energy"].append(data['telemetries'][i]['totalEnergy'])
+        df_dict["internal_temp"].append(data['telemetries'][i]['temperature'])
+        df_dict["inverter_mode"].append(data['telemetries'][i]['inverterMode'])
+        df_dict["operation_mode"].append(data['telemetries'][i]['operationMode'])
+        df_dict["vL1To2"].append(data['telemetries'][i]['vL1To2'])
+        df_dict["vL2To3"].append(data['telemetries'][i]['vL2To3'])
+        df_dict["vL3To1"].append(data['telemetries'][i]['vL3To1'])
+        for j, l in enumerate(["L1Data", "L2Data", "L3Data"]):
+            df_dict[f"ac_current_L{j+1}"].append(data['telemetries'][i][l]['acCurrent'])
+            df_dict[f"ac_voltage_L{j+1}"].append(data['telemetries'][i][l]['acVoltage'])
+            df_dict[f"ac_frequency_L{j+1}"].append(data['telemetries'][i][l]['acFrequency'])
+            df_dict[f"apparent_power_L{j+1}"].append(data['telemetries'][i][l]['apparentPower'])
+            df_dict[f"active_power_L{j+1}"].append(data['telemetries'][i][l]['activePower'])
+            df_dict[f"reactive_power_L{j+1}"].append(data['telemetries'][i][l]['reactivePower'])
+            df_dict[f"cos_phi_L{j+1}"].append(data['telemetries'][i][l]['cosPhi'])
+    
+    df = pd.DataFrame(df_dict)
+    return df
     
 def get_inverter_data(api_key:str,
                       site_id:str,
@@ -48,9 +92,9 @@ def get_inverter_data(api_key:str,
                       start_time:datetime,
                       end_time:datetime) -> pd.DataFrame:
     
-    time_format = "%Y-%m-%d%20%H:%M:%S"
-    start_time = datetime.strftime(start_time, time_format)
-    end_time = datetime.strftime(end_time, time_format)
+    time_format = "%Y-%m-%d %H:%M:%S"
+    start_time = datetime.strftime(start_time, time_format).replace(' ', '%20')
+    end_time = datetime.strftime(end_time, time_format).replace(' ', '%20')
 
     api_call = f"https://monitoringapi.solaredge.com/equipment/{site_id}/{serial_number}/data?"
     api_call = api_call + f"startTime={start_time}&endTime={end_time}"

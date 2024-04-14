@@ -22,14 +22,16 @@ def store_inverter_data(sites:dict,
         for j in range(len(df_components)):
             serial_number = df_components.loc[j, 'serialNumber']
             if start_time == None:
-                start_time = datetime.now()
-                end_time = start_time - timedelta(days=5)
+                end_time = datetime.now()
+                start_time = end_time - timedelta(days=5)
 
-                df_inv_data = get_inverter_data(api_key=api_key,
+            df_inv_data = get_inverter_data(api_key=api_key,
                                                 site_id=site_id,
                                                 serial_number=serial_number,
                                                 start_time=start_time,
                                                 end_time=end_time)
+            df_inv_data.to_csv(os.path.join(os.getcwd(), 'data', f'inverter_details_{serial_number}.csv'))
+
     return df_inv_data
 
 
@@ -61,12 +63,6 @@ def main(args: ArgumentParser) -> None:
     
 
     
-
-
-
-    
-
-
 
 if __name__ == "__main__":
     parser = ArgumentParser()
