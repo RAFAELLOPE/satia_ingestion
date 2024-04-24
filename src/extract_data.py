@@ -39,23 +39,20 @@ def store_fronius_inverter_data(sites:dict,
                                 end_time:datetime = None):
     
     fronius_ext = FroniusExtractor(sites)
-    df_pvs = fronius_ext.get_pv_system_list()
-    for s in list(df_pvs['pvSystemIds']):
-        df_components = fronius_ext.get_componet_list(pv_system_id=s)
-        for d in list(df_components['deviceIds']):
-            if start_time == None:
-                end_time = datetime.now()
-                start_time = end_time - timedelta(days=1)
+    df_pvs = fronius_ext.get_pv_systems_and_components()
+    for s, d in zip(df_pvs['pvSystemIds'], df_pvs['deviceIds']):
+        if start_time == None:
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=1)
+            df_inv_data = fronius_ext.get_device_data(pv_system_id = s,
+                                                      device_id = d,
+                                                      start_time = start_time,
+                                                      end_time=end_time)
             
-            df_inv_data = fronius_ext.api_dev_historical(pv_system_id = s,
-                                                        device_id = d,
-                                                        start_time = start_time,
-                                                        end_time=end_time)
-            
-            df_inv_data.to_csv(os.path.join(os.getcwd(), 
-                                            'data', 
-                                            'Fronius_data', 
-                                            f'inverter_details_{s}_{d}.csv'))
+        df_inv_data.to_csv(os.path.join(os.getcwd(), 
+                                        'data', 
+                                        'Fronius_data', 
+                                        f'inverter_details_{s}_{d}.csv'))
 
 
 
@@ -64,7 +61,7 @@ def store_fronius_inverter_data(sites:dict,
 def main(args: ArgumentParser) -> None:
     with open(args.config_file) as f:
         config = json.load(f)
-    sites = config["SITES"]
+    #sites = config["SITES"]
     satia_db_user = config["SATIADB"]["USER"]
     satia_db_pwd = config["SATIADB"]["PASSWORD"]
 
