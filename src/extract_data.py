@@ -6,8 +6,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.getcwd())
 
 from src.api_solared import *
-
-
+from src.api_fronius import *
 
 
 def store_solaredge_inverter_data(sites:dict,
@@ -38,7 +37,26 @@ def store_fronius_inverter_data(sites:dict,
                                 satia_pwd:str,
                                 start_time:datetime = None,
                                 end_time:datetime = None):
-    pass
+    
+    fronius_ext = FroniusExtractor(sites)
+    df_pvs = fronius_ext.get_pv_system_list()
+    for s in list(df_pvs['pvSystemIds']):
+        df_components = fronius_ext.get_componet_list(pv_system_id=s)
+        for d in list(df_components['deviceIds']):
+            if start_time == None:
+                end_time = datetime.now()
+                start_time = end_time - timedelta(days=1)
+            
+            df_inv_data = fronius_ext.api_dev_historical(pv_system_id = s,
+                                                        device_id = d,
+                                                        start_time = start_time,
+                                                        end_time=end_time)
+            
+            df_inv_data.to_csv(os.path.join(os.getcwd(), 
+                                            'data', 
+                                            'Fronius_data', 
+                                            f'inverter_details_{s}_{d}.csv'))
+
 
 
 
@@ -50,13 +68,13 @@ def main(args: ArgumentParser) -> None:
     satia_db_user = config["SATIADB"]["USER"]
     satia_db_pwd = config["SATIADB"]["PASSWORD"]
 
-    res_inf = store_solaredge_inverter_data(sites=config["SOLAREDGE"],
-                                            satia_usr = satia_db_user,
-                                            satia_pwd =satia_db_pwd)
+    # res_se = store_solaredge_inverter_data(sites=config["SOLAREDGE"],
+    #                                        satia_usr = satia_db_user,
+    #                                        satia_pwd =satia_db_pwd)
 
-    # res_comp = store_component_list(sites=sites,
-    #                                 satia_usr=satia_db_user,
-    #                                 satia_pwd=satia_db_pwd)
+    res_fr = store_fronius_inverter_data(sites=config["FRONIUS"],
+                                         satia_usr=satia_db_user,
+                                         satia_pwd=satia_db_pwd)
     
 
     

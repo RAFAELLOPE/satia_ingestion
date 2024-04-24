@@ -2,8 +2,6 @@ import requests
 import json
 import pandas as pd
 from datetime import datetime
-import os
-
 
 class SolarEdgeExtractor(object):
     def __init__(self, config:dict):
