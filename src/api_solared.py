@@ -9,8 +9,25 @@ class SolarEdgeExtractor(object):
         self.api_key = config["API_KEY"]
         self.component_list_api = f'https://monitoringapi.solaredge.com/equipment/{self.site_id}/list?api_key={self.api_key}'
         self.inverter_data_api = f'https://monitoringapi.solaredge.com/equipment/{self.site_id}/'
+        self.site_details_api = f'https://monitoringapi.solaredge.com/site/{self.site_id}/details?api_key={self.api_key}'
 
     
+    def transform_site_details(self, data:dict) -> dict:
+        data = data['details']
+        df_dict = {'site_id' : data['accountId'],
+                   'name' : data['name'],
+                   'status' : data['status'],
+                   'peak_power' : data['peakPower'],
+                   'currency' : 'EUR',
+                   'country' : data['location']['country'],
+                   'city' : data['location']['city'],
+                   'address': data['location']['address'],
+                   'zip': data['location']['zip'],
+                   'timezone': data['location']['timeZone'],
+                   'installation_date': datetime.strptime(data['installationDate'], '%Y-%m-%d')}
+        return df_dict
+
+
     def transform_component_list(self, data:dict) -> pd.DataFrame:
         df_dict = {'name':[],
                   'manufacturer':[],
@@ -25,8 +42,7 @@ class SolarEdgeExtractor(object):
             df_dict['serialNumber'].append(data['reporters']['list'][i]['serialNumber'])
             df_dict['kWpDC'].append(data['reporters']['list'][i]['kWpDC'])
     
-        df = pd.DataFrame(df_dict)
-        return df
+        return df_dict
 
     def transform_inverter_data(self, data:dict) -> pd.DataFrame:
         data = data['data']
@@ -37,10 +53,7 @@ class SolarEdgeExtractor(object):
                   "total_energy":[],
                   "internal_temp":[],
                   "inverter_mode":[],
-                  "operation_mode":[],
-                  "vL1To2":[],
-                  "vL2To3":[],
-                  "vL3To1":[]}
+                  "operation_mode":[]}
     
         for l in ["L1", "L2", "L3"]:
             df_dict[f"ac_current_{l}"] = []
@@ -64,16 +77,24 @@ class SolarEdgeExtractor(object):
             df_dict["vL2To3"].append(data['telemetries'][i]['vL2To3'])
             df_dict["vL3To1"].append(data['telemetries'][i]['vL3To1'])
             for j, l in enumerate(["L1Data", "L2Data", "L3Data"]):
-                df_dict[f"ac_current_L{j+1}"].append(data['telemetries'][i][l]['acCurrent'])
-                df_dict[f"ac_voltage_L{j+1}"].append(data['telemetries'][i][l]['acVoltage'])
-                df_dict[f"ac_frequency_L{j+1}"].append(data['telemetries'][i][l]['acFrequency'])
-                df_dict[f"apparent_power_L{j+1}"].append(data['telemetries'][i][l]['apparentPower'])
-                df_dict[f"active_power_L{j+1}"].append(data['telemetries'][i][l]['activePower'])
-                df_dict[f"reactive_power_L{j+1}"].append(data['telemetries'][i][l]['reactivePower'])
-                df_dict[f"cos_phi_L{j+1}"].append(data['telemetries'][i][l]['cosPhi'])
+                if l in data['telemetries'][i].keys():
+                    df_dict[f"ac_current_L{j+1}"].append(data['telemetries'][i][l]['acCurrent'])
+                    df_dict[f"ac_voltage_L{j+1}"].append(data['telemetries'][i][l]['acVoltage'])
+                    df_dict[f"ac_frequency_L{j+1}"].append(data['telemetries'][i][l]['acFrequency'])
+                    df_dict[f"apparent_power_L{j+1}"].append(data['telemetries'][i][l]['apparentPower'])
+                    df_dict[f"active_power_L{j+1}"].append(data['telemetries'][i][l]['activePower'])
+                    df_dict[f"reactive_power_L{j+1}"].append(data['telemetries'][i][l]['reactivePower'])
+                    df_dict[f"cos_phi_L{j+1}"].append(data['telemetries'][i][l]['cosPhi'])
+                else:
+                    df_dict[f"ac_current_L{j+1}"].append(None)
+                    df_dict[f"ac_voltage_L{j+1}"].append(None)
+                    df_dict[f"ac_frequency_L{j+1}"].append(None)
+                    df_dict[f"apparent_power_L{j+1}"].append(None)
+                    df_dict[f"active_power_L{j+1}"].append(None)
+                    df_dict[f"reactive_power_L{j+1}"].append(None)
+                    df_dict[f"cos_phi_L{j+1}"].append(None)
 
-        df = pd.DataFrame(df_dict)
-        return df
+        return df_dict
 
 
     def get_componet_list(self) -> pd.DataFrame:
@@ -112,6 +133,18 @@ class SolarEdgeExtractor(object):
         except requests.exceptions.RequestException as e:
             raise e
         return df
+    
+    def get_site_details(self) -> dict:
+        try:
+            res = requests.get(self.site_details_api)
+            if(res.ok):
+                data = json.loads(res.content)
+                data = self.transform_site_details(data)
+            else:
+                raise Exception(f"API response not OK: {res.status_code}")
+        except requests.exceptions.RequestException as e:
+            raise e
+        return data
     
 
 
