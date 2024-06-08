@@ -3,86 +3,93 @@ from argparse import ArgumentParser
 import os
 import sys
 from datetime import datetime, timedelta
-from supabase import create_client, Client
+import logging
 sys.path.insert(0, os.getcwd())
 
 from src.api_solared import *
 from src.api_fronius import *
 
 
-def store_solaredge_inverter_data(sites:dict,
-                                  satia_url:str,
-                                  satia_key:str,
-                                  start_time:datetime = None,
-                                  end_time:datetime = None):
+def store_solaredge_inverter_data_to_S3(sites:dict,
+                                        aws_access_key_id,
+                                        aws_secret_key,
+                                        start_time:datetime = None,
+                                        end_time:datetime = None):
 
-    supa_client = create_client(satia_url, satia_key)
-    acc_id = supa_client.table('account')\
-                        .eq('acc_name', 'dummy1')\
-                        .select('account_id')\
-                        .execute()
-    
     for site in sites.keys():
         solaredge_extr = SolarEdgeExtractor(sites[site])
-        site_details = solaredge_extr.get_site_details()
-        site_details['account_id'] = acc_id
-        installation_date = site_details['installation_date']
+        try:
+            site_details = solaredge_extr.get_site_details()
+        except Exception as e:
+            logging.error('Failed calling SolarEdge API get_site_details method')
+            raise e
         
-        res = supa_client.table("site")\
-                         .insert(site_details)\
-                         .execute()
+        installation_date = datetime.strptime(site_details['installation_date'], '%Y-%m-%d')
+        site_id = site_details['site_id']
+        df_site_details = pd.DataFrame([site_details])
+        df_site_details.rename(columns={'name':'site_name'}, inplace=True)
+
+        try:
+            components = solaredge_extr.get_componet_list()
+        except Exception as e:
+            logging.error('Failed calling SolarEdge API get_component_list method')
+            raise e
         
-        site_id = res['data']['id']
-        components = solaredge_extr.get_componet_list()
-        components['site_id'] = site_id
+        df_components = pd.DataFrame(components)
+        df_components['site_id'] = site_id
+        df_components.rename(columns={'serialNumber' : 'component_id',
+                                      'name':'component_name'}, inplace=True)
 
-        res_comp = supa_client.table("component")\
-                              .insert(components)\
-                              .execute()
-
-        comp_id = res_comp['data']['id']
-
-        for j in range(len(components)):
-            serial_number = components['serialNumber'][j]
-            
+        for j in range(len(df_components)):
+            serial_number = df_components.loc[j,'component_id']
+    
             start_time = installation_date
             while start_time <= datetime.now():
                 end_time = start_time + timedelta(days=5)
-                inv_data = solaredge_extr.get_inverter_data(serial_number=serial_number,
-                                                               start_time=start_time,
-                                                               end_time=end_time)
+
+                try:
+                    inv_data = solaredge_extr.get_inverter_data(serial_number=serial_number,
+                                                                start_time=start_time,
+                                                                 end_time=end_time)
+                    
+                    logging.info(f"Extracted SolarEdge API get_inverter_data method for serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                except Exception as e:
+                    logging.error(f"Failed calling SolarEdge API get_inverter_data method for serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    continue
             
-                inv_data['component_id'] = comp_id
-
-                res_comp = supa_client.table("inverter_ts")\
-                                      .insert(inv_data)\
-                                      .execute()
-
-                start_time = end_time + timedelta(days=1)
-
                 df_inv_data = pd.DataFrame(inv_data)
+                df_inv_data['component_id'] = serial_number
 
-                storage_path = os.path.join(os.getcwd(), 
-                                            'data',
-                                            'SolarEdge_data',
-                                            f'{site_id}')
-                if os.path.exists(storage_path):
-                    df_inv_data.to_csv(os.path.join(storage_path, f'inverter_details_{serial_number}.csv'), 
-                                       index=False)
-                else:
-                    os.makedirs(storage_path)
-                    df_inv_data.to_csv(os.path.join(storage_path, f'inverter_details_{serial_number}.csv'), 
-                                       index=False)
+                df_inv_data = pd.merge(df_inv_data, df_components, on='component_id', how='inner')
+                df_inv_data = pd.merge(df_inv_data, df_site_details, on='site_id', how='inner')
 
+                idx_cols = ['datetime'] + list(df_site_details.columns) + [c for c in df_components.columns if c!='site_id']
+                data_cols = [c for c in df_inv_data.columns if c not in idx_cols]
 
+                df_inv_data = df_inv_data[idx_cols + data_cols].drop_duplicates()
+
+                try:
+                    
+                    df_inv_data.to_csv(f"s3://prod-satia-raw-data/{site}/inverter_details_{start_time}_{serial_number}.csv",
+                                       index=False,
+                                       storage_options={"key" : aws_access_key_id,
+                                                        "secret": aws_secret_key})
+                    
+                    logging.info(f"Data stored into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                
+                except Exception as e:
+                    logging.error(f"Couldn't store inverter data into S3 for serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    raise(e)
+
+                start_time = end_time
+                
     return df_inv_data
 
 
-def store_fronius_inverter_data(sites:dict,
-                                satia_usr:str,
-                                satia_pwd:str,
-                                start_time:datetime = None,
-                                end_time:datetime = None):
+
+def store_fronius_inverter_data_to_S3(sites:dict,
+                                      start_time:datetime = None,
+                                     end_time:datetime = None):
     
     fronius_ext = FroniusExtractor(sites)
     df_pvs = fronius_ext.get_pv_systems_and_components()
@@ -107,22 +114,19 @@ def store_fronius_inverter_data(sites:dict,
 def main(args: ArgumentParser) -> None:
     with open(args.config_file) as f:
         config = json.load(f)
-    #sites = config["SITES"]
-    satia_db_url = config["SATIADB"]["URL"]
-    satia_db_key = config["SATIADB"]["KEY"]
 
-    res_se = store_solaredge_inverter_data(sites=config["SOLAREDGE"],
-                                           satia_url = satia_db_url,
-                                           satia_key =satia_db_key)
+    res_se = store_solaredge_inverter_data_to_S3(sites=config["SOLAREDGE"],
+                                                 aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
+                                                 aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
 
-    # res_fr = store_fronius_inverter_data(sites=config["FRONIUS"],
-    #                                      satia_usr=satia_db_user,
-    #                                      satia_pwd=satia_db_pwd)
     
 
     
 
 if __name__ == "__main__":
+    logging.basicConfig(filename=os.path.join(os.getcwd(), 'logs', 'upload.log'),
+                        filemode='w', 
+                        format='%(name)s - %(levelname)s - %(message)s')
     parser = ArgumentParser()
     parser.add_argument('--config_file',
                         type=str,

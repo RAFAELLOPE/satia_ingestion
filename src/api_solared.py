@@ -24,23 +24,21 @@ class SolarEdgeExtractor(object):
                    'address': data['location']['address'],
                    'zip': data['location']['zip'],
                    'timezone': data['location']['timeZone'],
-                   'installation_date': datetime.strptime(data['installationDate'], '%Y-%m-%d')}
+                   'installation_date': data['installationDate']}
         return df_dict
 
 
     def transform_component_list(self, data:dict) -> pd.DataFrame:
-        df_dict = {'name':[],
-                  'manufacturer':[],
-                  'model':[],
-                  'serialNumber':[],
-                  'kWpDC':[]}
+        df_dict = {"name":[],
+                   "manufacturer":[],
+                   "model":[],
+                   "serialNumber":[]}
 
         for i in range(data['reporters']['count']):
             df_dict['name'].append(data['reporters']['list'][i]['name'])
             df_dict['manufacturer'].append(data['reporters']['list'][i]['manufacturer'])
             df_dict['model'].append(data['reporters']['list'][i]['model'])
             df_dict['serialNumber'].append(data['reporters']['list'][i]['serialNumber'])
-            df_dict['kWpDC'].append(data['reporters']['list'][i]['kWpDC'])
     
         return df_dict
 
@@ -73,18 +71,15 @@ class SolarEdgeExtractor(object):
             df_dict["internal_temp"].append(data['telemetries'][i]['temperature'])
             df_dict["inverter_mode"].append(data['telemetries'][i]['inverterMode'])
             df_dict["operation_mode"].append(data['telemetries'][i]['operationMode'])
-            df_dict["vL1To2"].append(data['telemetries'][i]['vL1To2'])
-            df_dict["vL2To3"].append(data['telemetries'][i]['vL2To3'])
-            df_dict["vL3To1"].append(data['telemetries'][i]['vL3To1'])
             for j, l in enumerate(["L1Data", "L2Data", "L3Data"]):
                 if l in data['telemetries'][i].keys():
-                    df_dict[f"ac_current_L{j+1}"].append(data['telemetries'][i][l]['acCurrent'])
-                    df_dict[f"ac_voltage_L{j+1}"].append(data['telemetries'][i][l]['acVoltage'])
-                    df_dict[f"ac_frequency_L{j+1}"].append(data['telemetries'][i][l]['acFrequency'])
-                    df_dict[f"apparent_power_L{j+1}"].append(data['telemetries'][i][l]['apparentPower'])
-                    df_dict[f"active_power_L{j+1}"].append(data['telemetries'][i][l]['activePower'])
-                    df_dict[f"reactive_power_L{j+1}"].append(data['telemetries'][i][l]['reactivePower'])
-                    df_dict[f"cos_phi_L{j+1}"].append(data['telemetries'][i][l]['cosPhi'])
+                    df_dict[f"ac_current_L{j+1}"].append(data['telemetries'][i][l]['acCurrent'] if 'acCurrent' in data['telemetries'][i][l].keys() else None)
+                    df_dict[f"ac_voltage_L{j+1}"].append(data['telemetries'][i][l]['acVoltage'] if 'acVoltage' in data['telemetries'][i][l].keys()else None)
+                    df_dict[f"ac_frequency_L{j+1}"].append(data['telemetries'][i][l]['acFrequency'] if 'acFrequency' in data['telemetries'][i][l].keys()else None)
+                    df_dict[f"apparent_power_L{j+1}"].append(data['telemetries'][i][l]['apparentPower'] if 'apparentPower' in data['telemetries'][i][l].keys()else None)
+                    df_dict[f"active_power_L{j+1}"].append(data['telemetries'][i][l]['activePower'] if 'activePower' in data['telemetries'][i][l].keys()else None)
+                    df_dict[f"reactive_power_L{j+1}"].append(data['telemetries'][i][l]['reactivePower'] if 'reactivePower' in data['telemetries'][i][l].keys()else None)
+                    df_dict[f"cos_phi_L{j+1}"].append(data['telemetries'][i][l]['cosPhi'] if 'cosPhi' in data['telemetries'][i][l].keys()else None)
                 else:
                     df_dict[f"ac_current_L{j+1}"].append(None)
                     df_dict[f"ac_voltage_L{j+1}"].append(None)
