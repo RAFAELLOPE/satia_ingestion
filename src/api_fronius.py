@@ -16,21 +16,19 @@ class FroniusExtractor(object):
         self.api_dev_historical = f'https://api.solarweb.com/swqapi/pvsystems'
 
     
-    def transform_list_pv_systems(self, data:dict) -> pd.DataFrame:
+    def transform_list_pv_systems(self, data:dict) -> dict:
         data_dict = {'pvSystemIds':[]}
         for i in range(data['links']['totalItemsCount']):
             data_dict['pvSystemIds'].append(data['pvSystemIds'][i])
-        df = pd.DataFrame(data_dict)
-        return df
+        return data_dict
 
-    def transform_component_list(self, data:dict) -> pd.DataFrame:
+    def transform_component_list(self, data:dict) -> dict:
         data_dict = {'deviceIds':[]}
         for i in range(data['links']['totalItemsCount']):
             data_dict['deviceIds'].append(data['deviceIds'][i])
-        df = pd.DataFrame(data_dict)
-        return df
+        return data_dict
 
-    def transform_device_data(self, data_org:dict) -> pd.DataFrame:
+    def transform_device_data(self, data_org:dict) -> dict:
        data = data_org["data"]
        data_dict ={"datetime":[],
                    "total_energy":[],
@@ -95,8 +93,49 @@ class FroniusExtractor(object):
            data_dict["reactive_power"].append(reactive_power)
            data_dict["power_factor"].append(power_factor)
        
-       df_r = pd.DataFrame(data_dict)
-       return df_r
+       return data_dict
+
+
+    def transform_list_pv_systems_details(self, data:dict) -> dict:
+        data_dict = {'pvSystemId': data['pvSystemId'] if 'pvSystemId' in data.keys() else None,
+                     'name': data['name'] if 'name' in data.keys() else None,
+                     'country': data['address']['country'] if 'country' in data['address'].keys() else None,
+                     'zipCode': data['address']['zipCode'] if 'zipCode' in data['address'].keys() else None,
+                     'city': data['address']['city'] if 'city' in data['address'].keys() else None,
+                     'state': data['address']['state'] if 'state' in data['address'].keys() else None,
+                     'peakPower': data['peakPower'] if 'peakPower' in data.keys() else None,
+                     'installationDate': data['installationDate'] if 'installationDate' in data.keys() else None,
+                     'timeZone': data['timeZone'] if 'timeZone' in data.keys() else None}
+        
+        return data_dict
+        
+
+    def transform_device_details(self, data:dict) -> dict:
+        data_dict = {'deviceType' : data['deviceType'] if 'deviceType' in data.keys() else None,
+                     'deviceId': data['deviceId'] if 'deviceId' in data.keys() else None,
+                     'deviceName': data['deviceName'] if 'deviceName' in data.keys() else None,
+                     'deviceManufacturer': data['deviceManufacturer'] if 'deviceManufacturer' in data.keys() else None,
+                     'deviceCategory': data['deviceCategory'] if 'deviceCategory' in data.keys() else None,
+                     'deviceLocation': data['deviceLocation'] if 'deviceLocation' in data.keys() else None,
+                     'deviceTypeDetails': data['deviceTypeDetails'] if 'deviceTypeDetails' in data.keys() else None,
+                     'serialNumber': data['serialNumber'] if 'serialNumber' in data.keys() else None,
+                     'numberPhases': data['numberPhases'] if 'numberPhases' in data.keys() else None,
+                     'peakPower': sum([c if c!=None else 0 for c in data['peakPower'].values()]),
+                     'nominalAcPower': data['nominalAcPower'] if 'nominalAcPower' in data.keys() else None}
+        return data_dict
+
+    def get_pv_system_details(self, pv_system_id:str) -> dict:
+        api_call = self.api_list_devices + f'/{pv_system_id}'
+        try:
+            res = requests.get(api_call, headers=self.header)
+            if (res.ok):
+                data = json.loads(res.content)
+                df = self.transform_list_pv_systems_details(data)
+            else:
+                raise Exception(f"API response not OK: {res.status_code}")
+        except requests.exceptions.RequestException as e:
+            raise e
+        return df
 
     def get_pv_system_list(self) -> pd.DataFrame:
         try:
@@ -130,6 +169,7 @@ class FroniusExtractor(object):
         df_pv = self.get_pv_system_list()
         for pv in df_pv['pvSystemIds'].unique():
             df_dev = self.get_componet_list(pv_system_id=pv)
+            df_dev = pd.DataFrame(df_dev)
             df_dev['pvSystemIds'] = pv
             components.append(df_dev)
         
@@ -137,11 +177,27 @@ class FroniusExtractor(object):
         df_r.drop_duplicates(inplace=True)
         return df_r
     
+
+    def get_device_details(self,
+                           pv_system_id:str,
+                           device_id:str):
+        api_call = self.api_list_devices + f'/{pv_system_id}/devices/{device_id}'
+        try:
+            res = requests.get(api_call, headers=self.header)
+            if(res.ok):
+                data = json.loads(res.content)
+                df = self.transform_device_details(data)
+            else:
+                raise Exception(f"API response not OK: {res.status_code}")
+        except requests.exceptions.RequestException as e:
+            raise e
+        return df
+
     def get_device_data(self,
                         pv_system_id:str,
                         device_id:str,
                         start_time:datetime,
-                        end_time:datetime) -> pd.DataFrame:
+                        end_time:datetime) -> dict:
     
         time_format = "%Y-%m-%d %H:%M:%S"
         start_time = datetime.strftime(start_time, time_format).replace(' ', 'T')

@@ -65,12 +65,12 @@ class SolarEdgeExtractor(object):
         for i in range(data['count']):
             df_dict["datetime"].append(data['telemetries'][i]['date'])
             df_dict["total_active_power"].append(data['telemetries'][i]['totalActivePower'])
-            df_dict["dc_voltage"].append(data['telemetries'][i]['dcVoltage'])
-            df_dict["power_limit_perc"].append(data['telemetries'][i]['powerLimit'])
-            df_dict["total_energy"].append(data['telemetries'][i]['totalEnergy'])
-            df_dict["internal_temp"].append(data['telemetries'][i]['temperature'])
-            df_dict["inverter_mode"].append(data['telemetries'][i]['inverterMode'])
-            df_dict["operation_mode"].append(data['telemetries'][i]['operationMode'])
+            df_dict["dc_voltage"].append(data['telemetries'][i]['dcVoltage'] if 'dcVoltage' in data['telemetries'][i].keys() else None)
+            df_dict["power_limit_perc"].append(data['telemetries'][i]['powerLimit'] if 'powerLimit' in data['telemetries'][i].keys() else None)
+            df_dict["total_energy"].append(data['telemetries'][i]['totalEnergy'] if 'totalEnergy' in data['telemetries'][i].keys() else None)
+            df_dict["internal_temp"].append(data['telemetries'][i]['temperature'] if 'temperature' in data['telemetries'][i].keys() else None)
+            df_dict["inverter_mode"].append(data['telemetries'][i]['inverterMode'] if 'inverterMode' in data['telemetries'][i].keys() else None)
+            df_dict["operation_mode"].append(data['telemetries'][i]['operationMode'] if 'operationMode' in data['telemetries'][i].keys() else None)
             for j, l in enumerate(["L1Data", "L2Data", "L3Data"]):
                 if l in data['telemetries'][i].keys():
                     df_dict[f"ac_current_L{j+1}"].append(data['telemetries'][i][l]['acCurrent'] if 'acCurrent' in data['telemetries'][i][l].keys() else None)

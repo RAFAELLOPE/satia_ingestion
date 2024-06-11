@@ -52,9 +52,10 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                                                                 start_time=start_time,
                                                                  end_time=end_time)
                     
-                    logging.info(f"Extracted SolarEdge API get_inverter_data method for serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    logging.info(f"Extracted SolarEdge API get_inverter_data method for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                 except Exception as e:
-                    logging.error(f"Failed calling SolarEdge API get_inverter_data method for serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    logging.error(f"Failed calling SolarEdge API get_inverter_data method for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    logging.error(str(e))
                     continue
             
                 df_inv_data = pd.DataFrame(inv_data)
@@ -69,44 +70,88 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                 df_inv_data = df_inv_data[idx_cols + data_cols].drop_duplicates()
 
                 try:
+                    if len(df_inv_data) >  0:
+                        df_inv_data.to_csv(f"s3://prod-satia-raw-data/{site}/inverter_details_{start_time}_{serial_number}.csv",
+                                           index=False,
+                                           storage_options={"key" : aws_access_key_id,
+                                                            "secret": aws_secret_key})
                     
-                    df_inv_data.to_csv(f"s3://prod-satia-raw-data/{site}/inverter_details_{start_time}_{serial_number}.csv",
-                                       index=False,
-                                       storage_options={"key" : aws_access_key_id,
-                                                        "secret": aws_secret_key})
-                    
-                    logging.info(f"Data stored into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                        logging.info(f"Data stored into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    else:
+                        logging.warning(f"No data retrieved for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                 
                 except Exception as e:
-                    logging.error(f"Couldn't store inverter data into S3 for serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    logging.error(f"Couldn't store inverter data into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                     raise(e)
 
                 start_time = end_time
                 
-    return df_inv_data
+    return
 
 
 
 def store_fronius_inverter_data_to_S3(sites:dict,
+                                      aws_secret_key:str,
+                                      aws_access_key_id: str,
                                       start_time:datetime = None,
-                                     end_time:datetime = None):
+                                      end_time:datetime = None):
     
     fronius_ext = FroniusExtractor(sites)
-    df_pvs = fronius_ext.get_pv_systems_and_components()
+    try:
+        df_pvs = fronius_ext.get_pv_systems_and_components()
+    except Exception as e:
+        logging.error('Failed calling Fronius API get_pv_systems_and_components')
+        raise e
     for s, d in zip(df_pvs['pvSystemIds'], df_pvs['deviceIds']):
+        # Get PV System details
+        try:
+            pvs_details = fronius_ext.get_pv_system_details(pv_system_id=s)
+            df_pvs_details = pd.DataFrame(pvs_details)
+            logging.info(f'Successfully extracted pv system details for pv_system={s}')
+        except Exception as e:
+            logging.error(f'Failed calling Fronius API get_pv_system_details method for pv_system={s}')
+            logging.error(str(e))
+
+        # Get Device details
+        try:
+            device_details = fronius_ext.get_device_details(pv_system_id=s, device_id=d)
+            df_dev_details = pd.DataFrame(device_details)
+            logging.info(f'Successfully extracted pv device details for pv_system={s} and device_id={d}')
+        except Exception as e:
+            logging.error(f'Failed calling Fronius API get_device_details method for pv_system={s} and device_id={d}')
+
         if start_time == None:
             end_time = datetime.now()
-            start_time = end_time - timedelta(days=1)
-            df_inv_data = fronius_ext.get_device_data(pv_system_id = s,
-                                                      device_id = d,
-                                                      start_time = start_time,
-                                                      end_time=end_time)
+            try:
+                inv_data = fronius_ext.get_device_data(pv_system_id = s,
+                                                       device_id = d,
+                                                       start_time = start_time,
+                                                       end_time=end_time)
+                df_inv_data = pd.DataFrame(inv_data)
+                df_inv_data['deviceId'] = d
+                logging.info(f"Extracted SolarEdge API get_inverter_data method for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
+            except Exception as e:
+                logging.error(f"Failed calling SolarEdge API get_inverter_data method for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
+                logging.error(str(e))
             
-        df_inv_data.to_csv(os.path.join(os.getcwd(), 
-                                        'data', 
-                                        'Fronius_data', 
-                                        f'inverter_details_{s}_{d}.csv'))
+        try:
+            if len(df_inv_data) > 0:
+                df_inv = pd.merge(df_inv_data, df_dev_details, on='deviceId', how='inner')
+                df_inv = pd.merge(df_inv, df_pvs_details, on='pvSystemId', how='inner')
 
+                df_inv_data = df_inv_data[[c for c in df_pvs_details.columns] + 
+                                          [c for c in df_dev_details.columns if c != 'pvSystemId'] +
+                                          [c for c in df_inv_data.columns if c not in ['pvSystemId', 'deviceId']]]
+
+                # df_inv_data.to_csv(f"s3://prod-satia-raw-data/{s}/inverter_details_{start_time}_{d}.csv",
+                #                   index=False,
+                #                    storage_options={"key" : aws_access_key_id,
+                #                                     "secret": aws_secret_key})
+        except Exception as e:
+            logging.error(f"Couldn't store inverter data into S3 for for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
+            raise(e)
+        
+        start_time = end_time - timedelta(days=1)
 
 
 
@@ -115,9 +160,13 @@ def main(args: ArgumentParser) -> None:
     with open(args.config_file) as f:
         config = json.load(f)
 
-    res_se = store_solaredge_inverter_data_to_S3(sites=config["SOLAREDGE"],
-                                                 aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
-                                                 aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
+    # store_solaredge_inverter_data_to_S3(sites=config["SOLAREDGE"],
+    #                                     aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
+    #                                     aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
+    
+    store_fronius_inverter_data_to_S3(sites=config["FRONIUS"],
+                                      aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
+                                      aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
 
     
 
