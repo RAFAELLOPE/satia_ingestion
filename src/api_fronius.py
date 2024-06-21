@@ -28,72 +28,46 @@ class FroniusExtractor(object):
             data_dict['deviceIds'].append(data['deviceIds'][i])
         return data_dict
 
-    def transform_device_data(self, data_org:dict) -> dict:
-       data = data_org["data"]
-       data_dict ={"datetime":[],
-                   "total_energy":[],
-                   "total_active_power":[],
-                   "dc_voltage":[],
-                   "dc_current":[],
-                   "dc_energy":[],
-                   "power_limit_perc":[],
-                   "internal_temp":[],
-                   "inverter_mode":[],
-                   "operation_mode":[],
-                   "ac_current_L1":[],
-                   "ac_voltage_L1":[],
-                   "ac_current_L2":[],
-                   "ac_voltage_L2":[],
-                   "ac_current_L3":[],
-                   "ac_voltage_L3":[],
-                   "apparent_power":[],
-                   "reactive_power":[],
-                   "power_factor":[]}
-    
-       for i in range(len(data)):
-           long_dur = data[i]['logDuration']
-           channels = data[i]['channels']
-           total_energy = [c['value'] for c in channels if c['channelName'] == 'EnergyExported'][0]
-           power_limit_perc = [c['value'] for c in channels if c['channelName'] == 'StandardizedPower'][0]
-           total_active_power = total_energy * 3600 / long_dur
-           ac_voltage_L1 = [c['value'] for c in channels if c['channelName'] == 'VoltageA'][0]
-           ac_voltage_L2 = [c['value'] for c in channels if c['channelName'] == 'VoltageB'][0]
-           ac_voltage_L3 = [c['value'] for c in channels if c['channelName'] == 'VoltageC'][0]
-           ac_current_L1 = [c['value'] for c in channels if c['channelName'] == 'CurrentA'][0]
-           ac_current_L2 = [c['value'] for c in channels if c['channelName'] == 'CurrentB'][0]
-           ac_current_L3 = [c['value'] for c in channels if c['channelName'] == 'CurrentC'][0]
-           dc_voltage_1 = [c['value'] for c in channels if c['channelName'] == 'VoltageDC1'][0]
-           dc_voltage_2 = [c['value'] for c in channels if c['channelName'] == 'VoltageDC2'][0]
-           dc_current_1 = [c['value'] for c in channels if c['channelName'] == 'CurrentDC1'][0]
-           dc_current_2 = [c['value'] for c in channels if c['channelName'] == 'CurrentDC2'][0]
-           reactive_power = [c['value'] for c in channels if c['channelName'] == 'ReactivePower'][0]
-           apparent_power = [c['value'] for c in channels if c['channelName'] == 'ApparentPower'][0]
-           power_factor = [c['value'] for c in channels if c['channelName'] == 'ApparentPower'][0]
-           energy_dc1 = [c['value'] for c in channels if c['channelName'] == 'EnergyDC1'][0]
-           energy_dc2 = [c['value'] for c in channels if c['channelName'] == 'EnergyDC2'][0]
+    def transform_device_data(self, data_org:dict) -> pd.DataFrame:
+        data = data_org["data"]
+        df_result = pd.DataFrame()
 
-           # Append data
-           data_dict['datetime'].append(data[i]['logDateTime'])
-           data_dict['total_energy'].append(total_energy)
-           data_dict['total_active_power'].append(total_active_power)
-           data_dict['dc_voltage'].append(dc_voltage_1 + dc_voltage_2)
-           data_dict['dc_current'].append(dc_current_1 + dc_current_2)
-           data_dict['dc_energy'].append(energy_dc1 + energy_dc2)
-           data_dict['power_limit_perc'].append(power_limit_perc)
-           data_dict['internal_temp'].append(None)
-           data_dict['inverter_mode'].append(None)
-           data_dict['operation_mode'].append(None)
-           data_dict["ac_current_L1"].append(ac_current_L1)
-           data_dict["ac_voltage_L1"].append(ac_voltage_L1)
-           data_dict["ac_current_L2"].append(ac_current_L2)
-           data_dict["ac_voltage_L2"].append(ac_voltage_L2)
-           data_dict["ac_current_L3"].append(ac_current_L3)
-           data_dict["ac_voltage_L3"].append(ac_voltage_L3)
-           data_dict["apparent_power"].append(apparent_power)
-           data_dict["reactive_power"].append(reactive_power)
-           data_dict["power_factor"].append(power_factor)
-       
-       return data_dict
+        for i in range(len(data)):
+            date_time = data[i]['logDateTime'].replace('T', ' ').replace('Z', '')
+            long_dur = data[i]['logDuration']
+            channels = data[i]['channels']
+
+            df_channels = pd.DataFrame(channels)
+            df_channels_t = df_channels[['channelName', 'value']].T
+            df_channels_t = df_channels_t.drop('channelName')\
+                                        .reset_index(drop=True)\
+                                        .rename_axis(None, axis=1)
+            df_channels_t.columns = df_channels['channelName']
+            df_channels_t['datetime'] = date_time
+            if 'EnergyExported' in df_channels_t.columns:
+                df_channels_t['total_active_power'] = df_channels_t['EnergyExported'] * 3600 / long_dur
+            else:
+                df_channels_t['total_active_power'] = None
+
+            #Fill missing cols
+            if i == 0:
+                df_result = df_channels_t
+            else:
+                res_cols = set(df_result.columns)
+                chn_cols = set(df_channels_t.columns)
+                diff_cols = list(res_cols.difference(chn_cols)) + \
+                            list(chn_cols.difference(res_cols))
+                for c in diff_cols:
+                    if c not in df_channels_t.columns:
+                        df_channels_t[c] = None
+                    elif c not in df_result.columns:
+                        df_result[c] = None
+                
+                df_channels_t  = df_channels_t[df_result.columns]
+                df_result = pd.concat([df_result, df_channels_t])
+
+        df_result.reset_index(drop=True, inplace=True)
+        return df_result
 
 
     def transform_list_pv_systems_details(self, data:dict) -> dict:
@@ -167,7 +141,7 @@ class FroniusExtractor(object):
     def get_pv_systems_and_components(self) -> pd.DataFrame:
         components = []
         df_pv = self.get_pv_system_list()
-        for pv in df_pv['pvSystemIds'].unique():
+        for pv in set(df_pv['pvSystemIds']):
             df_dev = self.get_componet_list(pv_system_id=pv)
             df_dev = pd.DataFrame(df_dev)
             df_dev['pvSystemIds'] = pv
@@ -197,7 +171,7 @@ class FroniusExtractor(object):
                         pv_system_id:str,
                         device_id:str,
                         start_time:datetime,
-                        end_time:datetime) -> dict:
+                        end_time:datetime) -> pd.DataFrame:
     
         time_format = "%Y-%m-%d %H:%M:%S"
         start_time = datetime.strftime(start_time, time_format).replace(' ', 'T')
