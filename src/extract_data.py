@@ -156,10 +156,10 @@ def store_fronius_inverter_data_to_S3(sites:dict,
                         df_inv_data['deviceId'] = d
                         df_inv_data['pvSystemId'] = s
                         inv_data_list.append(df_inv_data)
-                        logging.info(f"Extracted SolarEdge API get_inverter_data method for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
+                        logging.info(f"Extracted Fronius API get_inverter_data method for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
                         days += 1
                 except Exception as e:
-                    logging.error(f"Failed calling SolarEdge API get_inverter_data method for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
+                    logging.error(f"Failed calling Fronius API get_inverter_data method for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
                     logging.error(str(e))
                 start_time = end_time
             else:
@@ -184,140 +184,162 @@ def store_fronius_inverter_data_to_S3(sites:dict,
                     raise(e)
 
 
-def store_huaweii_inverter_data_to_S3(sites:dict):
+def store_huaweii_inverter_data_to_S3(sites:dict,
+                                      aws_secret_key:str,
+                                      aws_access_key_id: str):
     extractor = HuaweiiExtractor(sites)
-    extractor.log_in()
-    plants = extractor.get_plant_list()
-    df_plants = pd.DataFrame(plants)
-    plantCodes = df_plants.plantCode.unique()
-    devices = extractor.get_device_list(plantCodes)
-    df_devices = pd.DataFrame(devices)
-    df_devices = df_devices[df_devices.devTypeId == 1]
-    df_devices = df_devices.drop(['latitude', 'longitude'], axis=1)
-    df_devices.rename(columns={'stationCode':'plantCode'}, inplace=True)
+    try:
+        extractor.log_in()
+    except Exception as e:
+        logging.error(f'Failed to login in Huaweii API: {str(e)}')
+    
+    try:
+        plants = extractor.get_plant_list()
+        df_plants = pd.DataFrame(plants)
+        plantCodes = df_plants.plantCode.unique()
+    except Exception as e:
+        logging.error(f'Failed calling Huaweii API get_plant_list: {str(e)}')
+    
+    try:
+        devices = extractor.get_device_list(plantCodes)
+        df_devices = pd.DataFrame(devices)
+        df_devices = df_devices[df_devices.devTypeId == 1]
+        df_devices = df_devices.drop(['latitude', 'longitude'], axis=1)
+        df_devices.rename(columns={'stationCode':'plantCode'}, inplace=True)
+    except Exception as e:
+        logging.error(f'Failed calling Huaweii API get_device_list for plants {plantCodes}: {str(e)}')
+    
     df = pd.merge(df_devices, df_plants, on='plantCode', how='inner')
+    df.rename(columns={'id': 'devId'}, inplace=True)
     
     for pl in range(len(df_plants)):
         start_date = df_plants.loc[pl, 'gridConnectionDate']
         plant = df_plants.loc[pl, 'plantCode']
+        site = df_plants.loc[pl, 'plantName']
         start_date = datetime.strptime(start_date, "%Y-%m-%dT%H:%M:%S%z")
         end_date = start_date + timedelta(days=3)
-        devices = list(df[df['plantCode'] == plant]['id'])
+        devices = list(df[df['plantCode'] == plant]['devId'])
         devices = [str(d) for d in devices]
         
         while end_date <= datetime.now(end_date.tzinfo):
             start_time = int(start_date.timestamp() * 1000)
             end_time = int(end_date.timestamp() * 1000)
-            dev_data = extractor.get_device_data(devices, start_time, end_time)
 
-            df_data_tmp = json_normalize(dev_data['data'],
-                                         meta=['devId',
-                                           'sn', 
-                                           'collectTime', 
-                                                ['dataItemMap', 'pv26_i'],
-                                                ['dataItemMap', 'pv2_u'],
-                                                ['dataItemMap', 'pv28_i'],
-                                                ['dataItemMap', 'pv4_u'],
-                                                ['dataItemMap', 'pv22_i'],
-                                                ['dataItemMap', 'power_factor'],
-                                                ['dataItemMap', 'pv6_u'],
-                                                ['dataItemMap', 'pv24_i'],
-                                                ['dataItemMap', 'mppt_total_cap'],
-                                                ['dataItemMap', 'pv8_u'],
-                                                ['dataItemMap', 'pv22_u'],
-                                                ['dataItemMap', 'open_time'],
-                                                ['dataItemMap', 'a_i'],
-                                                ['dataItemMap', 'pv24_u'],
-                                                ['dataItemMap', 'c_i'],
-                                                ['dataItemMap', 'mppt_9_cap'],
-                                                ['dataItemMap', 'pv20_u'],
-                                                ['dataItemMap', 'pv19_u'],
-                                                ['dataItemMap', 'pv15_u'],
-                                                ['dataItemMap', 'a_u'],
-                                                ['dataItemMap', 'reactive_power'],
-                                                ['dataItemMap', 'pv17_u'],
-                                                ['dataItemMap', 'c_u'],
-                                                ['dataItemMap', 'mppt_8_cap'],
-                                                ['dataItemMap', 'pv20_i'],
-                                                ['dataItemMap', 'pv15_i'],
-                                                ['dataItemMap', 'efficiency'],
-                                                ['dataItemMap', 'pv17_i'],
-                                                ['dataItemMap', 'pv11_i'],
-                                                ['dataItemMap', 'pv13_i'],
-                                                ['dataItemMap', 'pv11_u'],
-                                                ['dataItemMap', 'mppt_power'],
-                                                ['dataItemMap', 'pv13_u'],
-                                                ['dataItemMap', 'close_time'],
-                                                ['dataItemMap', 'pv19_i'],
-                                                ['dataItemMap', 'mppt_7_cap'],
-                                                ['dataItemMap', 'mppt_5_cap'],
-                                                ['dataItemMap', 'pv27_u'],
-                                                ['dataItemMap', 'pv2_i'],
-                                                ['dataItemMap', 'active_power'],
-                                                ['dataItemMap', 'pv4_i'],
-                                                ['dataItemMap', 'pv6_i'],
-                                                ['dataItemMap', 'pv8_i'],
-                                                ['dataItemMap', 'mppt_6_cap'],
-                                                ['dataItemMap', 'pv27_i'],
-                                                ['dataItemMap', 'pv1_u'],
-                                                ['dataItemMap', 'pv3_u'],
-                                                ['dataItemMap', 'pv23_i'],
-                                                ['dataItemMap', 'pv5_u'],
-                                                ['dataItemMap', 'pv25_i'],
-                                                ['dataItemMap', 'pv7_u'],
-                                                ['dataItemMap', 'pv23_u'],
-                                                ['dataItemMap', 'inverter_state'],
-                                                ['dataItemMap', 'pv9_u'],
-                                                ['dataItemMap', 'pv25_u'],
-                                                ['dataItemMap', 'total_cap'],
-                                                ['dataItemMap', 'b_i'],
-                                                ['dataItemMap', 'mppt_3_cap'],
-                                                ['dataItemMap', 'pv21_u'],
-                                                ['dataItemMap', 'mppt_10_cap'],
-                                                ['dataItemMap', 'pv16_u'],
-                                                ['dataItemMap', 'pv18_u'],
-                                                ['dataItemMap', 'temperature'],
-                                                ['dataItemMap', 'bc_u'],
-                                                ['dataItemMap', 'b_u'],
-                                                ['dataItemMap', 'pv21_i'],
-                                                ['dataItemMap', 'elec_freq'],
-                                                ['dataItemMap', 'mppt_4_cap'],
-                                                ['dataItemMap', 'pv16_i'],
-                                                ['dataItemMap', 'pv18_i'],
-                                                ['dataItemMap', 'day_cap'],
-                                                ['dataItemMap', 'pv12_i'],
-                                                ['dataItemMap', 'pv14_i'],
-                                                ['dataItemMap', 'pv12_u'],
-                                                ['dataItemMap', 'pv14_u'],
-                                                ['dataItemMap', 'mppt_1_cap'],
-                                                ['dataItemMap', 'pv10_u'],
-                                                ['dataItemMap', 'pv1_i'],
-                                                ['dataItemMap', 'pv26_u'],
-                                                ['dataItemMap', 'pv3_i'],
-                                                ['dataItemMap', 'pv28_u'],
-                                                ['dataItemMap', 'mppt_2_cap'],
-                                                ['dataItemMap', 'pv5_i'],
-                                                ['dataItemMap', 'ab_u'],
-                                                ['dataItemMap', 'ca_u'],
-                                                ['dataItemMap', 'pv7_i'],
-                                                ['dataItemMap', 'pv10_i'],
-                                                ['dataItemMap', 'pv9_i']
-                                                ])
+            try:
+                dev_data = extractor.get_device_data(devices, start_time, end_time)
 
+                df_data_tmp = json_normalize(dev_data['data'],
+                                             meta=['devId',
+                                                   'sn', 
+                                                   'collectTime', 
+                                                    ['dataItemMap', 'pv26_i'],
+                                                    ['dataItemMap', 'pv2_u'],
+                                                    ['dataItemMap', 'pv28_i'],
+                                                    ['dataItemMap', 'pv4_u'],
+                                                    ['dataItemMap', 'pv22_i'],
+                                                    ['dataItemMap', 'power_factor'],
+                                                    ['dataItemMap', 'pv6_u'],
+                                                    ['dataItemMap', 'pv24_i'],
+                                                    ['dataItemMap', 'mppt_total_cap'],
+                                                    ['dataItemMap', 'pv8_u'],
+                                                    ['dataItemMap', 'pv22_u'],
+                                                    ['dataItemMap', 'open_time'],
+                                                    ['dataItemMap', 'a_i'],
+                                                    ['dataItemMap', 'pv24_u'],
+                                                    ['dataItemMap', 'c_i'],
+                                                    ['dataItemMap', 'mppt_9_cap'],
+                                                    ['dataItemMap', 'pv20_u'],
+                                                    ['dataItemMap', 'pv19_u'],
+                                                    ['dataItemMap', 'pv15_u'],
+                                                    ['dataItemMap', 'a_u'],
+                                                    ['dataItemMap', 'reactive_power'],
+                                                    ['dataItemMap', 'pv17_u'],
+                                                    ['dataItemMap', 'c_u'],
+                                                    ['dataItemMap', 'mppt_8_cap'],
+                                                    ['dataItemMap', 'pv20_i'],
+                                                    ['dataItemMap', 'pv15_i'],
+                                                    ['dataItemMap', 'efficiency'],
+                                                    ['dataItemMap', 'pv17_i'],
+                                                    ['dataItemMap', 'pv11_i'],
+                                                    ['dataItemMap', 'pv13_i'],
+                                                    ['dataItemMap', 'pv11_u'],
+                                                    ['dataItemMap', 'mppt_power'],
+                                                    ['dataItemMap', 'pv13_u'],
+                                                    ['dataItemMap', 'close_time'],
+                                                    ['dataItemMap', 'pv19_i'],
+                                                    ['dataItemMap', 'mppt_7_cap'],
+                                                    ['dataItemMap', 'mppt_5_cap'],
+                                                    ['dataItemMap', 'pv27_u'],
+                                                    ['dataItemMap', 'pv2_i'],
+                                                    ['dataItemMap', 'active_power'],
+                                                    ['dataItemMap', 'pv4_i'],
+                                                    ['dataItemMap', 'pv6_i'],
+                                                    ['dataItemMap', 'pv8_i'],
+                                                    ['dataItemMap', 'mppt_6_cap'],
+                                                    ['dataItemMap', 'pv27_i'],
+                                                    ['dataItemMap', 'pv1_u'],
+                                                    ['dataItemMap', 'pv3_u'],
+                                                    ['dataItemMap', 'pv23_i'],
+                                                    ['dataItemMap', 'pv5_u'],
+                                                    ['dataItemMap', 'pv25_i'],
+                                                    ['dataItemMap', 'pv7_u'],
+                                                    ['dataItemMap', 'pv23_u'],
+                                                    ['dataItemMap', 'inverter_state'],
+                                                    ['dataItemMap', 'pv9_u'],
+                                                    ['dataItemMap', 'pv25_u'],
+                                                    ['dataItemMap', 'total_cap'],
+                                                    ['dataItemMap', 'b_i'],
+                                                    ['dataItemMap', 'mppt_3_cap'],
+                                                    ['dataItemMap', 'pv21_u'],
+                                                    ['dataItemMap', 'mppt_10_cap'],
+                                                    ['dataItemMap', 'pv16_u'],
+                                                    ['dataItemMap', 'pv18_u'],
+                                                    ['dataItemMap', 'temperature'],
+                                                    ['dataItemMap', 'bc_u'],
+                                                    ['dataItemMap', 'b_u'],
+                                                    ['dataItemMap', 'pv21_i'],
+                                                    ['dataItemMap', 'elec_freq'],
+                                                    ['dataItemMap', 'mppt_4_cap'],
+                                                    ['dataItemMap', 'pv16_i'],
+                                                    ['dataItemMap', 'pv18_i'],
+                                                    ['dataItemMap', 'day_cap'],
+                                                    ['dataItemMap', 'pv12_i'],
+                                                    ['dataItemMap', 'pv14_i'],
+                                                    ['dataItemMap', 'pv12_u'],
+                                                    ['dataItemMap', 'pv14_u'],
+                                                    ['dataItemMap', 'mppt_1_cap'],
+                                                    ['dataItemMap', 'pv10_u'],
+                                                    ['dataItemMap', 'pv1_i'],
+                                                    ['dataItemMap', 'pv26_u'],
+                                                    ['dataItemMap', 'pv3_i'],
+                                                    ['dataItemMap', 'pv28_u'],
+                                                    ['dataItemMap', 'mppt_2_cap'],
+                                                    ['dataItemMap', 'pv5_i'],
+                                                    ['dataItemMap', 'ab_u'],
+                                                    ['dataItemMap', 'ca_u'],
+                                                    ['dataItemMap', 'pv7_i'],
+                                                    ['dataItemMap', 'pv10_i'],
+                                                    ['dataItemMap', 'pv9_i']])
+                new_col_names = [c.replace('.', '_') for c in df_data_tmp.columns]
+                df_data_tmp.columns = new_col_names
+            except Exception as e:
+                logging.error(f'Failed calling Huaweii API get_device_data for devices {devices}: {str(e)}')
+            
             df_data_tmp['collectTime'] = df_data_tmp['collectTime'].apply(lambda x: datetime.fromtimestamp(x/1000.0))
+            df_ = pd.merge(df, df_data_tmp, on='devId', how='inner')
             try:
                 if len(df_data_tmp) >  0:
-                    df_data_tmp.to_csv(f"s3://prod-satia-raw-data/{site}/inverter_details_{start_time}_{serial_number}.csv",
-                                       index=False,
-                                       storage_options={"key" : aws_access_key_id,
-                                                        "secret": aws_secret_key})
+                    df_.to_csv(f"s3://prod-satia-raw-data/{site}/inverter_details_{start_time}.csv",
+                               index=False,
+                               storage_options={"key" : aws_access_key_id,
+                                                "secret": aws_secret_key})
                     
-                    logging.info(f"Data stored into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    logging.info(f"Data stored into S3 for site={site}, start_time={start_time}, end_time={end_time}")
                 else:
-                    logging.warning(f"No data retrieved for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    logging.warning(f"No data retrieved for site={site}, start_time={start_time}, end_time={end_time}")
                 
             except Exception as e:
-                logging.error(f"Couldn't store inverter data into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                logging.error(f"Couldn't store inverter data into S3 for site={site}, start_time={start_time}, end_time={end_time}")
                 raise(e)
             start_date = end_date
             end_date = start_date + timedelta(days=3)
@@ -363,7 +385,7 @@ if __name__ == "__main__":
                         type=str,
                         required=False,
                         default='huaweii',
-                        options=['huaweii', 'fronius', 'solaredge'])
+                        choices=['huaweii', 'fronius', 'solaredge'])
     
     args = parser.parse_args()
     main(args)
