@@ -1,2 +1,5 @@
 env
 config.json
+*.csv
+*.pyc
+*.log
