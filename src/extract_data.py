@@ -325,7 +325,10 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
             except Exception as e:
                 logging.error(f'Failed calling Huaweii API get_device_data for devices {devices}: {str(e)}')
             
-            df_data_tmp['collectTime'] = df_data_tmp['collectTime'].apply(lambda x: datetime.fromtimestamp(x/1000.0))
+            try:
+                df_data_tmp['Date'] = df_data_tmp['collectTime'].apply(lambda x: datetime.fromtimestamp(int(x)/1000))
+            except Exception as e:
+                print(e)
             df_ = pd.merge(df, df_data_tmp, on='devId', how='inner')
             try:
                 if len(df_data_tmp) >  0:
@@ -365,6 +368,7 @@ def main(args: ArgumentParser) -> None:
         store_huaweii_inverter_data_to_S3(sites = config["HUAWEII"],
                                           aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
                                           aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
+        print('Done')
     
 
     
