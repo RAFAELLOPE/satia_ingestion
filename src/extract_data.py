@@ -11,13 +11,23 @@ sys.path.insert(0, os.getcwd())
 from src.api_solared import *
 from src.api_fronius import *
 from src.api_huaweii import *
+from src.api_metomatics import *
+from src.api_aws import *
+
+
+
 
 
 def store_solaredge_inverter_data_to_S3(sites:dict,
+                                        meteo_credentials:dict,
                                         aws_access_key_id,
                                         aws_secret_key,
                                         start_time:datetime = None,
                                         end_time:datetime = None):
+
+    meteo_extractor = MeteoExtractor(meteo_credentials)
+    aws_s3 = AWS3Extractor(aws_secret_key=aws_secret_key,
+                           aws_access_key_id=aws_access_key_id)
 
     for site in sites.keys():
         solaredge_extr = SolarEdgeExtractor(sites[site])
@@ -27,10 +37,33 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
             logging.error('Failed calling SolarEdge API get_site_details method')
             raise e
         
-        installation_date = datetime.strptime(site_details['installation_date'], '%Y-%m-%d')
-        site_id = site_details['site_id']
-        df_site_details = pd.DataFrame([site_details])
-        df_site_details.rename(columns={'name':'site_name'}, inplace=True)
+        installation_date = datetime.strptime(site_details['installationDate'], '%Y-%m-%d')
+        site_id = site_details['id']
+        city = site_details['location']['city']
+        timezone = site_details['location']['timeZone']
+        df_site_details = json_normalize(data=site_details, 
+                                         meta=['id', 
+                                               'name',
+                                               'accountId',
+                                               'peakPower',
+                                               'lastUpdateTime',
+                                               'installationDate',
+                                               'ptoDate',
+                                               'notes',
+                                               'type',
+                                               ['location', 'country'],
+                                               ['location', 'city'],
+                                               ['location', 'address'],
+                                               ['location', 'zip'],
+                                               ['location', 'timeZone'],
+                                               ['location', 'countryCode'],
+                                               ['primaryModule', 'manufacturerName'],
+                                               ['primaryModule', 'modelName'],
+                                               ['primaryModule', 'maximumPower'],
+                                               ['primaryModule', 'temperatureCoef']])
+        
+        df_site_details.columns = [c.replace('.', '_') for c in df_site_details.columns]
+        df_site_details.rename(columns={'name':'site_name', 'id':'site_id'}, inplace=True)
 
         try:
             components = solaredge_extr.get_componet_list()
@@ -46,14 +79,25 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
         for j in range(len(df_components)):
             serial_number = df_components.loc[j,'component_id']
     
-            start_time = installation_date
+            start_time = aws_s3.get_last_data_date(folder=f'SolarEdge/{site}')
+            if start_time == None:
+                start_time = installation_date
+            
             while start_time <= datetime.now():
                 end_time = start_time + timedelta(days=5)
 
                 try:
+                    df_meteo = meteo_extractor.get_whather_data(start_date=start_time,
+                                                                end_date=end_time,
+                                                                timezone=timezone,
+                                                                place=city)
+                except Exception as e:
+                    logging.error(str(e))
+
+                try:
                     inv_data = solaredge_extr.get_inverter_data(serial_number=serial_number,
                                                                 start_time=start_time,
-                                                                 end_time=end_time)
+                                                                end_time=end_time)
                     
                     logging.info(f"Extracted SolarEdge API get_inverter_data method for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                 except Exception as e:
@@ -61,9 +105,39 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                     logging.error(str(e))
                     continue
             
-                df_inv_data = pd.DataFrame(inv_data)
+                df_inv_data = json_normalize(data=inv_data,
+                                             meta=['date',
+                                                   'totalActivePower',
+                                                   'dcVoltage',
+                                                   'powerLimit',
+                                                   'totalEnergy',
+                                                   'temperature',
+                                                   'operationMode',
+                                                   ['L1Data', 'acCurrent'],
+                                                   ['L1Data', 'acVoltage'],
+                                                   ['L1Data', 'acFrequency'],
+                                                   ['L1Data', 'apparentPower'],
+                                                   ['L1Data', 'activePower'],
+                                                   ['L1Data', 'reactivePower'],
+                                                   ['L1Data', 'cosPhi'],
+                                                   ['L2Data', 'acCurrent'],
+                                                   ['L2Data', 'acVoltage'],
+                                                   ['L2Data', 'acFrequency'],
+                                                   ['L2Data', 'apparentPower'],
+                                                   ['L2Data', 'activePower'],
+                                                   ['L2Data', 'reactivePower'],
+                                                   ['L2Data', 'cosPhi'],
+                                                   ['L3Data', 'acCurrent'],
+                                                   ['L3Data', 'acVoltage'],
+                                                   ['L3Data', 'acFrequency'],
+                                                   ['L3Data', 'apparentPower'],
+                                                   ['L3Data', 'activePower'],
+                                                   ['L3Data', 'reactivePower'],
+                                                   ['L3Data', 'cosPhi'], ])
+                
+                df_inv_data.columns = [c.replace('.', '_') for c in df_inv_data.columns]
                 df_inv_data['component_id'] = serial_number
-
+                df_inv_data.rename(columns={'date':'datetime'}, inplace=True)
                 df_inv_data = pd.merge(df_inv_data, df_components, on='component_id', how='inner')
                 df_inv_data = pd.merge(df_inv_data, df_site_details, on='site_id', how='inner')
 
@@ -74,17 +148,23 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
 
                 try:
                     if len(df_inv_data) >  0:
-                        df_inv_data.to_csv(f"s3://prod-satia-raw-data/{site}/inverter_details_{start_time}_{serial_number}.csv",
-                                           index=False,
-                                           storage_options={"key" : aws_access_key_id,
-                                                            "secret": aws_secret_key})
-                    
+                        aws_s3.store_csv_s3(df = df_inv_data,
+                                            folder=f'SolarEdge/{site}/Plant',
+                                            file_name=f'inverter_details_{start_time}_{serial_number}.csv')
+                        
                         logging.info(f"Data stored into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                     else:
                         logging.warning(f"No data retrieved for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                 
                 except Exception as e:
                     logging.error(f"Couldn't store inverter data into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
+                    raise(e)
+
+                try:
+                    aws_s3.store_csv_s3(df = df_meteo,
+                                        folder=f'SolarEdge/{site}/Weather',
+                                        file_name=f'weather_data_{start_time}.csv')
+                except Exception as e:
                     raise(e)
 
                 start_time = end_time
@@ -348,15 +428,13 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
             end_date = start_date + timedelta(days=3)
 
 
-
-
-
 def main(args: ArgumentParser) -> None:
     with open(args.config_file) as f:
         config = json.load(f)
 
     if args.api == 'solaredge':
         store_solaredge_inverter_data_to_S3(sites=config["SOLAREDGE"],
+                                            meteo_credentials=config["METEOSOURCE"],
                                             aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
                                             aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
     
@@ -371,7 +449,7 @@ def main(args: ArgumentParser) -> None:
         print('Done')
     
 
-    
+
 
     
 
@@ -388,7 +466,7 @@ if __name__ == "__main__":
     parser.add_argument('--api',
                         type=str,
                         required=False,
-                        default='huaweii',
+                        default='solaredge',
                         choices=['huaweii', 'fronius', 'solaredge'])
     
     args = parser.parse_args()

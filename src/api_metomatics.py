@@ -1,8 +1,8 @@
 import requests
 import json
-from argparse import ArgumentParser
-import os
 from pandas import json_normalize
+from datetime import datetime, timedelta
+import pandas as pd
 
 class MeteoExtractor(object):
     def __init__(self, config) -> None:
@@ -10,7 +10,9 @@ class MeteoExtractor(object):
         self.flexi_base = 'https://www.meteosource.com/api/v1/flexi/'
     
 
-    def get_coordinates(self, place:str, timezone:str = 'Europe/Madrid') -> dict:
+    def get_coordinates(self, 
+                        place:str, 
+                        timezone:str = 'Europe/Madrid') -> dict:
         endpoint = self.flexi_base + f'find_places'
         payload = {'language' : 'en',
                    'key': self.api_key,
@@ -30,7 +32,7 @@ class MeteoExtractor(object):
                       lat:str, 
                       lon:str, 
                       date:str, 
-                      timezone:str = 'Europe/Madrid') -> list:
+                      timezone:str = 'Europe/Madrid') -> pd.DataFrame:
         endpoint = self.flexi_base + f'time_machine'
         payload = {'lat' : lat,
                    'lon' : lon,
@@ -46,18 +48,30 @@ class MeteoExtractor(object):
             return data['data']
         except requests.exceptions.RequestException as e:
             raise e
+        
+    def get_whather_data(self, 
+                         start_date:str, 
+                         end_date:str,
+                         timezone:str = 'Europe/Madrid',
+                         lon:str = None,
+                         lat:str = None,
+                         place:str = None) -> pd.DataFrame:
+        
+        if (lon == None) or (lat == None):
+            coordinates = self.get_coordinates(place=place, 
+                                               timezone=timezone)
+            lon = coordinates['lon']
+            lat = coordinates['lat']
+        
+        df_w = pd.DataFrame()
 
-def main(args):
-    with open(args.config_file) as f:
-        config = json.load(f)
-    
-    meteo_credentials = config["METEOSOURCE"]
-    meteo_extractor = MeteoExtractor(meteo_credentials)
-    coordinates = meteo_extractor.get_coordinates(place='Granada')
-    lon = coordinates['lon']
-    lat = coordinates['lat']
-    data = meteo_extractor.get_hist_data(lat=lat, lon=lon, date='2024-01-01')
-    df = json_normalize(data=data,
+        while start_date <= end_date:
+            date = datetime.strftime(start_date, "%Y-%m-%d")
+            data = self.get_hist_data(lat=lat, 
+                                      lon=lon, 
+                                      date=date, 
+                                      timezone=timezone)
+            df = json_normalize(data=data,
                         meta=['date', 
                               'weather', 
                               'summary', 
@@ -84,19 +98,13 @@ def main(args):
                               'irradiance',
                               'ozone',
                               'humidity'])
-    
-    df.to_csv(os.path.join(os.getcwd(), 'data', 'Meto', 'meto_data_Granada.csv'),index=False)
-    return
+            df.columns = [c.replace('.', '_') for c in df.columns]
+            #df.rename(columns={'date':'datetime'}, inplace=True)
+            df_w = pd.concat([df_w, df])
+            start_date += timedelta(days=1)
+        df_w.rename(columns={'date':'datetime'}, inplace=True)
+        df_w['datetime'] = df_w['datetime'].apply(lambda x: x.replace('T', ' '))
+        return df_w
 
 
-
-if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument('--config_file',
-                        type=str,
-                        required=False,
-                        default=os.path.join(os.getcwd(), 'config.json'))
-    
-    args = parser.parse_args()
-    main(args)   
 
