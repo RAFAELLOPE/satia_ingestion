@@ -1,6 +1,7 @@
 import requests
 import json
 import pandas as pd
+from pandas import json_normalize
 from datetime import datetime
 
 class SolarEdgeExtractor(object):
@@ -57,5 +58,73 @@ class SolarEdgeExtractor(object):
         except requests.exceptions.RequestException as e:
             raise e
     
+    def get_site_details_as_df(self) -> pd.DataFrame:
+        site_details = self.get_site_details()
+        df_site_details = json_normalize(data=site_details, 
+                                         meta=['id', 
+                                               'name',
+                                               'accountId',
+                                               'peakPower',
+                                               'lastUpdateTime',
+                                               'installationDate',
+                                               'ptoDate',
+                                               'notes',
+                                               'type',
+                                               ['location', 'country'],
+                                               ['location', 'city'],
+                                               ['location', 'address'],
+                                               ['location', 'zip'],
+                                               ['location', 'timeZone'],
+                                               ['location', 'countryCode'],
+                                               ['primaryModule', 'manufacturerName'],
+                                               ['primaryModule', 'modelName'],
+                                               ['primaryModule', 'maximumPower'],
+                                               ['primaryModule', 'temperatureCoef']])
+        
+        df_site_details.columns = [c.replace('.', '_') for c in df_site_details.columns]
+        df_site_details.rename(columns={'name':'site_name', 'id':'site_id'}, inplace=True)
+        return df_site_details
+    
+    def get_inverter_data_as_df(self, 
+                                serial_number:str,
+                                start_time:datetime,
+                                end_time:datetime) -> pd.DataFrame:
+        
+        inv_data = self.get_inverter_data(serial_number=serial_number,
+                                          start_time=start_time,
+                                          end_time=end_time)
+        df_inv_data = json_normalize(data=inv_data,
+                                             meta=['date',
+                                                   'totalActivePower',
+                                                   'dcVoltage',
+                                                   'powerLimit',
+                                                   'totalEnergy',
+                                                   'temperature',
+                                                   'operationMode',
+                                                   ['L1Data', 'acCurrent'],
+                                                   ['L1Data', 'acVoltage'],
+                                                   ['L1Data', 'acFrequency'],
+                                                   ['L1Data', 'apparentPower'],
+                                                   ['L1Data', 'activePower'],
+                                                   ['L1Data', 'reactivePower'],
+                                                   ['L1Data', 'cosPhi'],
+                                                   ['L2Data', 'acCurrent'],
+                                                   ['L2Data', 'acVoltage'],
+                                                   ['L2Data', 'acFrequency'],
+                                                   ['L2Data', 'apparentPower'],
+                                                   ['L2Data', 'activePower'],
+                                                   ['L2Data', 'reactivePower'],
+                                                   ['L2Data', 'cosPhi'],
+                                                   ['L3Data', 'acCurrent'],
+                                                   ['L3Data', 'acVoltage'],
+                                                   ['L3Data', 'acFrequency'],
+                                                   ['L3Data', 'apparentPower'],
+                                                   ['L3Data', 'activePower'],
+                                                   ['L3Data', 'reactivePower'],
+                                                   ['L3Data', 'cosPhi'], ])
+                
+        df_inv_data.columns = [c.replace('.', '_') for c in df_inv_data.columns]
+        df_inv_data.rename(columns={'date':'datetime'}, inplace=True)
+        return df_inv_data
 
 

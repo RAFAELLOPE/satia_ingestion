@@ -1,6 +1,7 @@
 import requests
 import json
 import pandas as pd
+from pandas import json_normalize
 from datetime import datetime
 
 
@@ -15,21 +16,9 @@ class FroniusExtractor(object):
         self.api_list_devices = f'https://api.solarweb.com/swqapi/pvsystems'
         self.api_dev_historical = f'https://api.solarweb.com/swqapi/pvsystems'
 
-    
-    def transform_list_pv_systems(self, data:dict) -> dict:
-        data_dict = {'pvSystemIds':[]}
-        for i in range(data['links']['totalItemsCount']):
-            data_dict['pvSystemIds'].append(data['pvSystemIds'][i])
-        return data_dict
-
-    def transform_component_list(self, data:dict) -> dict:
-        data_dict = {'deviceIds':[]}
-        for i in range(data['links']['totalItemsCount']):
-            data_dict['deviceIds'].append(data['deviceIds'][i])
-        return data_dict
 
     def transform_device_data(self, data_org:dict) -> pd.DataFrame:
-        data = data_org["data"]
+        data = data_org
         df_result = pd.DataFrame()
 
         for i in range(len(data)):
@@ -104,24 +93,23 @@ class FroniusExtractor(object):
             res = requests.get(api_call, headers=self.header)
             if (res.ok):
                 data = json.loads(res.content)
-                df = self.transform_list_pv_systems_details(data)
+                return data
             else:
                 raise Exception(f"API response not OK: {res.status_code}")
         except requests.exceptions.RequestException as e:
             raise e
-        return df
+
 
     def get_pv_system_list(self) -> pd.DataFrame:
         try:
             res = requests.get(self.api_list_pv_systems, headers=self.header)
             if (res.ok):
                 data = json.loads(res.content)
-                df = self.transform_list_pv_systems(data)
+                return data
             else:
                 raise Exception(f"API response not OK: {res.status_code}")
         except requests.exceptions.RequestException as e:
             raise e
-        return df
 
 
     def get_componet_list(self, pv_system_id:str) -> pd.DataFrame:
@@ -130,20 +118,19 @@ class FroniusExtractor(object):
             res = requests.get(api_call, headers=self.header)
             if(res.ok):
                 data = json.loads(res.content)
-                df = self.transform_component_list(data)
+                return data
             else:
                 raise Exception(f"API response not OK: {res.status_code}")
         except requests.exceptions.RequestException as e:
             raise e
-        return df
 
 
     def get_pv_systems_and_components(self) -> pd.DataFrame:
         components = []
-        df_pv = self.get_pv_system_list()
-        for pv in set(df_pv['pvSystemIds']):
-            df_dev = self.get_componet_list(pv_system_id=pv)
-            df_dev = pd.DataFrame(df_dev)
+        pvs = self.get_pv_system_list()
+        for pv in set(pvs['pvSystemIds']):
+            devs = self.get_componet_list(pv_system_id=pv)
+            df_dev = pd.DataFrame(devs['deviceIds'], columns=['deviceIds'])
             df_dev['pvSystemIds'] = pv
             components.append(df_dev)
         
@@ -154,24 +141,23 @@ class FroniusExtractor(object):
 
     def get_device_details(self,
                            pv_system_id:str,
-                           device_id:str):
+                           device_id:str) -> dict:
         api_call = self.api_list_devices + f'/{pv_system_id}/devices/{device_id}'
         try:
             res = requests.get(api_call, headers=self.header)
             if(res.ok):
                 data = json.loads(res.content)
-                df = self.transform_device_details(data)
+                return data
             else:
                 raise Exception(f"API response not OK: {res.status_code}")
         except requests.exceptions.RequestException as e:
             raise e
-        return df
 
     def get_device_data(self,
                         pv_system_id:str,
                         device_id:str,
                         start_time:datetime,
-                        end_time:datetime) -> pd.DataFrame:
+                        end_time:datetime) -> dict:
     
         time_format = "%Y-%m-%d %H:%M:%S"
         start_time = datetime.strftime(start_time, time_format).replace(' ', 'T')
@@ -184,12 +170,76 @@ class FroniusExtractor(object):
             res = requests.get(api_call, headers=self.header)
             if(res.ok):
                 data = json.loads(res.content)
-                df = self.transform_device_data(data)
+                return data['data']
             else:
                 raise Exception(f"API response not OK: {res.status_code}")
         except requests.exceptions.RequestException as e:
             raise e
-        return df
-    
 
+    def get_pv_system_details_as_df(self, pv_system_id:str) -> pd.DataFrame:
+        pv_details = self.get_pv_system_details(pv_system_id = pv_system_id)
+        df_pvs_details = json_normalize(data=pv_details,
+                                        meta=['pvSystemId',
+                                              'name',
+                                              'installationDate',
+                                              'peakPower',
+                                              'lastImport',
+                                              'timeZone',
+                                              ['address', 'country'],
+                                              ['address', 'zipCode'],
+                                              ['address', 'street'],
+                                              ['address', 'city'],
+                                              ['address', 'state']])
 
+        df_pvs_details.columns = [c.replace('.', '_') for c in df_pvs_details.columns]
+        df_pvs_details['installationDate'] = df_pvs_details['installationDate']\
+                                             .apply(lambda x: datetime.strptime(x.replace('T', ' ').replace('Z', ''), 
+                                                                                '%Y-%m-%d %H:%M:%S'))
+        return df_pvs_details
+        
+
+    def get_device_details_as_df(self,
+                                 pv_system_id:str,
+                                 device_id:str) -> pd.DataFrame:
+        dev_details = self.get_device_details(pv_system_id = pv_system_id,
+                                              device_id = device_id)
+        
+        df_dev_details = json_normalize(data=dev_details,
+                                        meta=['deviceType',
+                                              'deviceId',
+                                              'deviceName',
+                                              'deviceManufacturer',
+                                              'serialNumber',
+                                              'deviceTypeDetails',
+                                              'nodeType',
+                                              'numberMPPTrackers',
+                                              'numberPhases',
+                                              'isActive',
+                                              'activationDate',
+                                              'deactivationDate'])
+        
+        df_dev_details.columns = [c.replace('.', '_') for c in df_dev_details.columns]
+        df_dev_details['activationDate'] = df_dev_details['activationDate']\
+                                             .apply(lambda x: datetime.strptime(x.replace('T', ' ').replace('Z', ''), 
+                                                                                '%Y-%m-%d %H:%M:%S') if not pd.isnull(x) else x)
+        df_dev_details['deactivationDate'] = df_dev_details['deactivationDate']\
+                                             .apply(lambda x: datetime.strptime(x.replace('T', ' ').replace('Z', ''), 
+                                                                                '%Y-%m-%d %H:%M:%S') if not pd.isnull(x) else x)
+        
+        df_dev_details = df_dev_details[df_dev_details['deviceType'] == 'Inverter']
+
+        return df_dev_details
+
+    def get_device_data_as_df(self,
+                              pv_system_id:str,
+                              device_id:str,
+                              start_time:datetime,
+                              end_time:datetime) -> pd.DataFrame:
+        
+        dev_data = self.get_device_data(pv_system_id = pv_system_id,
+                                        device_id = device_id,
+                                        start_time = start_time,
+                                        end_time = end_time)
+        
+        df_dev = self.transform_device_data(dev_data)
+        return df_dev

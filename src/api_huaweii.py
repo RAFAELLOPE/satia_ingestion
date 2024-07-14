@@ -81,7 +81,8 @@ class HuaweiiExtractor(object):
                 return res_data
         except requests.exceptions.RequestException as e:
             raise e
-        return
+    
+    
     
 
 

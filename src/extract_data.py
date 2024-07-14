@@ -32,39 +32,16 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
     for site in sites.keys():
         solaredge_extr = SolarEdgeExtractor(sites[site])
         try:
-            site_details = solaredge_extr.get_site_details()
+            df_site_details = solaredge_extr.get_site_details_as_df()
         except Exception as e:
             logging.error('Failed calling SolarEdge API get_site_details method')
             raise e
         
-        installation_date = datetime.strptime(site_details['installationDate'], '%Y-%m-%d')
-        site_id = site_details['id']
-        city = site_details['location']['city']
-        timezone = site_details['location']['timeZone']
-        df_site_details = json_normalize(data=site_details, 
-                                         meta=['id', 
-                                               'name',
-                                               'accountId',
-                                               'peakPower',
-                                               'lastUpdateTime',
-                                               'installationDate',
-                                               'ptoDate',
-                                               'notes',
-                                               'type',
-                                               ['location', 'country'],
-                                               ['location', 'city'],
-                                               ['location', 'address'],
-                                               ['location', 'zip'],
-                                               ['location', 'timeZone'],
-                                               ['location', 'countryCode'],
-                                               ['primaryModule', 'manufacturerName'],
-                                               ['primaryModule', 'modelName'],
-                                               ['primaryModule', 'maximumPower'],
-                                               ['primaryModule', 'temperatureCoef']])
+        installation_date = datetime.strptime(df_site_details.loc[0,'installationDate'], '%Y-%m-%d')
+        site_id = df_site_details.loc[0, 'site_id']
+        city = df_site_details.loc[0, 'location_city']
+        timezone = df_site_details.loc[0, 'location_timeZone']
         
-        df_site_details.columns = [c.replace('.', '_') for c in df_site_details.columns]
-        df_site_details.rename(columns={'name':'site_name', 'id':'site_id'}, inplace=True)
-
         try:
             components = solaredge_extr.get_componet_list()
         except Exception as e:
@@ -79,7 +56,7 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
         for j in range(len(df_components)):
             serial_number = df_components.loc[j,'component_id']
     
-            start_time = aws_s3.get_last_data_date(folder=f'SolarEdge/{site}')
+            start_time = aws_s3.get_last_data_date(folder=f'SolarEdge/{site}/PlantData')
             if start_time == None:
                 start_time = installation_date
             
@@ -95,9 +72,9 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                     logging.error(str(e))
 
                 try:
-                    inv_data = solaredge_extr.get_inverter_data(serial_number=serial_number,
-                                                                start_time=start_time,
-                                                                end_time=end_time)
+                    df_inv_data = solaredge_extr.get_inverter_data(serial_number=serial_number,
+                                                                   start_time=start_time,
+                                                                   end_time=end_time)
                     
                     logging.info(f"Extracted SolarEdge API get_inverter_data method for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                 except Exception as e:
@@ -105,51 +82,17 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                     logging.error(str(e))
                     continue
             
-                df_inv_data = json_normalize(data=inv_data,
-                                             meta=['date',
-                                                   'totalActivePower',
-                                                   'dcVoltage',
-                                                   'powerLimit',
-                                                   'totalEnergy',
-                                                   'temperature',
-                                                   'operationMode',
-                                                   ['L1Data', 'acCurrent'],
-                                                   ['L1Data', 'acVoltage'],
-                                                   ['L1Data', 'acFrequency'],
-                                                   ['L1Data', 'apparentPower'],
-                                                   ['L1Data', 'activePower'],
-                                                   ['L1Data', 'reactivePower'],
-                                                   ['L1Data', 'cosPhi'],
-                                                   ['L2Data', 'acCurrent'],
-                                                   ['L2Data', 'acVoltage'],
-                                                   ['L2Data', 'acFrequency'],
-                                                   ['L2Data', 'apparentPower'],
-                                                   ['L2Data', 'activePower'],
-                                                   ['L2Data', 'reactivePower'],
-                                                   ['L2Data', 'cosPhi'],
-                                                   ['L3Data', 'acCurrent'],
-                                                   ['L3Data', 'acVoltage'],
-                                                   ['L3Data', 'acFrequency'],
-                                                   ['L3Data', 'apparentPower'],
-                                                   ['L3Data', 'activePower'],
-                                                   ['L3Data', 'reactivePower'],
-                                                   ['L3Data', 'cosPhi'], ])
-                
-                df_inv_data.columns = [c.replace('.', '_') for c in df_inv_data.columns]
                 df_inv_data['component_id'] = serial_number
-                df_inv_data.rename(columns={'date':'datetime'}, inplace=True)
                 df_inv_data = pd.merge(df_inv_data, df_components, on='component_id', how='inner')
                 df_inv_data = pd.merge(df_inv_data, df_site_details, on='site_id', how='inner')
 
                 idx_cols = ['datetime'] + list(df_site_details.columns) + [c for c in df_components.columns if c!='site_id']
                 data_cols = [c for c in df_inv_data.columns if c not in idx_cols]
-
                 df_inv_data = df_inv_data[idx_cols + data_cols].drop_duplicates()
-
                 try:
                     if len(df_inv_data) >  0:
                         aws_s3.store_csv_s3(df = df_inv_data,
-                                            folder=f'SolarEdge/{site}/Plant',
+                                            folder=f'SolarEdge/{site}/PlantData',
                                             file_name=f'inverter_details_{start_time}_{serial_number}.csv')
                         
                         logging.info(f"Data stored into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
@@ -162,13 +105,12 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
 
                 try:
                     aws_s3.store_csv_s3(df = df_meteo,
-                                        folder=f'SolarEdge/{site}/Weather',
+                                        folder=f'SolarEdge/{site}/WeatherData',
                                         file_name=f'weather_data_{start_time}.csv')
                 except Exception as e:
                     raise(e)
-
-                start_time = end_time
                 
+                start_time = end_time 
     return
 
 def equalize_fronius_dataframes(list_df:list) -> list:
@@ -187,25 +129,40 @@ def equalize_fronius_dataframes(list_df:list) -> list:
     return final_dfs
 
 
+
+
 def store_fronius_inverter_data_to_S3(sites:dict,
+                                      meteo_credentials:dict,
                                       aws_secret_key:str,
                                       aws_access_key_id: str,
                                       start_time:datetime = None,
                                       end_time:datetime = None):
     
     fronius_ext = FroniusExtractor(sites)
+    meteo_extractor = MeteoExtractor(meteo_credentials)
+    aws_s3 = AWS3Extractor(aws_secret_key=aws_secret_key,
+                           aws_access_key_id=aws_access_key_id)
+    
     try:
         df_pvs = fronius_ext.get_pv_systems_and_components()
     except Exception as e:
         logging.error('Failed calling Fronius API get_pv_systems_and_components')
         raise e
+    
+    ################### This is just for testing purposes ####################################
+    df_pvs = df_pvs[(df_pvs['pvSystemIds'] == '25c1b557-5621-4cb8-9d2b-84907c324aab') &
+                    (df_pvs['deviceIds'] == 'f62a7b80-2686-4d49-b0fa-afc100bd4c95')]
+
+    ##########################################################################################
+
     for s, d in zip(df_pvs['pvSystemIds'], df_pvs['deviceIds']):
         # Get PV System details
         try:
-            pvs_details = fronius_ext.get_pv_system_details(pv_system_id=s)
-            installation_date = datetime.strptime(pvs_details['installationDate'].replace('T', ' ').replace('Z', ''), 
-                                                  '%Y-%m-%d %H:%M:%S')
-            df_pvs_details = pd.DataFrame([pvs_details])
+            df_pvs_details = fronius_ext.get_pv_system_details_as_df(pv_system_id=s)
+            site = df_pvs_details.loc[0, 'name']
+            timezone = df_pvs_details.loc[0, 'timeZone']
+            city = df_pvs_details.loc[0, 'address_city']
+            installation_date = df_pvs_details.loc[0, 'installationDate']
             logging.info(f'Successfully extracted pv system details for pv_system={s}')
         except Exception as e:
             logging.error(f'Failed calling Fronius API get_pv_system_details method for pv_system={s}')
@@ -213,24 +170,25 @@ def store_fronius_inverter_data_to_S3(sites:dict,
 
         # Get Device details
         try:
-            device_details = fronius_ext.get_device_details(pv_system_id=s, device_id=d)
-            df_dev_details = pd.DataFrame([device_details])
-            df_dev_details.rename(columns={'peakPower' : 'device_peakPower'}, inplace=True)
+            df_dev_details = fronius_ext.get_device_details_as_df(pv_system_id=s, device_id=d)
             logging.info(f'Successfully extracted pv device details for pv_system={s} and device_id={d}')
         except Exception as e:
             logging.error(f'Failed calling Fronius API get_device_details method for pv_system={s} and device_id={d}')
 
-        start_time = installation_date
+
+        start_time = aws_s3.get_last_data_date(folder=f'Fronius/{site}/PlantData')
+        if start_time == None:
+            start_time = installation_date
         days = 0
         inv_data_list = []
         while start_time <= datetime.now():
             if days <= 7:
                 end_time = start_time + timedelta(days=1)
                 try:
-                    df_inv_data = fronius_ext.get_device_data(pv_system_id = s,
-                                                              device_id = d,
-                                                              start_time = start_time,
-                                                              end_time=end_time)
+                    df_inv_data = fronius_ext.get_device_data_as_df(pv_system_id = s,
+                                                                    device_id = d,
+                                                                    start_time = start_time,
+                                                                    end_time=end_time)
                     
                     if len(df_inv_data) > 0:
                         df_inv_data['deviceId'] = d
@@ -241,11 +199,12 @@ def store_fronius_inverter_data_to_S3(sites:dict,
                 except Exception as e:
                     logging.error(f"Failed calling Fronius API get_inverter_data method for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
                     logging.error(str(e))
-                start_time = end_time
             else:
                 days = 0
                 inv_data_eq = equalize_fronius_dataframes(inv_data_list)
                 df_inv_data = pd.concat(inv_data_eq)
+
+
                 try:
                     if len(df_inv_data) > 0:
                         df_inv = pd.merge(df_inv_data, df_dev_details, on='deviceId', how='inner')
@@ -254,14 +213,25 @@ def store_fronius_inverter_data_to_S3(sites:dict,
                         df_inv = df_inv[['datetime'] + [c for c in df_pvs_details.columns if c != 'datetime'] + 
                                         [c for c in df_dev_details.columns if c not in ['datetime', 'pvSystemId']] +
                                         [c for c in df_inv_data.columns if c not in ['datetime', 'pvSystemId', 'deviceId']]]
+                        
+                        # Extract meteo data
+                        df_meteo = meteo_extractor.get_whather_data(start_date=datetime.strptime(min(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
+                                                                    end_date=datetime.strptime(max(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
+                                                                    timezone=timezone,
+                                                                    place=city)
+                        
+                        aws_s3.store_csv_s3(df = df_inv_data,
+                                            folder=f'Fronius/{site}/PlantData',
+                                            file_name=f'inverter_details_{start_time}_{d}.csv')
+                        
+                        aws_s3.store_csv_s3(df = df_meteo,
+                                            folder=f'Fronius/{site}/WeatherData',
+                                            file_name=f'weather_data_{start_time}.csv')
 
-                        df_inv.to_csv(f"s3://prod-satia-raw-data/{df_inv.loc[0,'name']}/inverter_details_{start_time}_{d}.csv",
-                                      index=False,
-                                       storage_options={"key" : aws_access_key_id,
-                                                       "secret": aws_secret_key})
                 except Exception as e:
                     logging.error(f"Couldn't store inverter data into S3 for for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
                     raise(e)
+            start_time = end_time
 
 
 def store_huaweii_inverter_data_to_S3(sites:dict,
@@ -440,6 +410,7 @@ def main(args: ArgumentParser) -> None:
     
     elif args.api == 'fronius':
         store_fronius_inverter_data_to_S3(sites=config["FRONIUS"],
+                                          meteo_credentials=config["METEOSOURCE"],
                                           aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
                                           aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
     elif args.api == 'huaweii':
