@@ -49,7 +49,7 @@ class MeteoExtractor(object):
         except requests.exceptions.RequestException as e:
             raise e
         
-    def get_whather_data(self, 
+    def get_wheather_data(self, 
                          start_date:str, 
                          end_date:str,
                          timezone:str = 'Europe/Madrid',
@@ -99,7 +99,6 @@ class MeteoExtractor(object):
                               'ozone',
                               'humidity'])
             df.columns = [c.replace('.', '_') for c in df.columns]
-            #df.rename(columns={'date':'datetime'}, inplace=True)
             df_w = pd.concat([df_w, df])
             start_date += timedelta(days=1)
         df_w.rename(columns={'date':'datetime'}, inplace=True)

@@ -22,6 +22,7 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                                         meteo_credentials:dict,
                                         aws_access_key_id,
                                         aws_secret_key,
+                                        coordinates:dict,
                                         start_time:datetime = None,
                                         end_time:datetime = None):
 
@@ -64,10 +65,19 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                 end_time = start_time + timedelta(days=5)
 
                 try:
-                    df_meteo = meteo_extractor.get_whather_data(start_date=start_time,
-                                                                end_date=end_time,
-                                                                timezone=timezone,
-                                                                place=city)
+                    if site in coordinates.keys():
+                        lon = coordinates[site]["lon"]
+                        lat = coordinates[site]["lat"]
+                        df_meteo = meteo_extractor.get_wheather_data(start_date=start_time,
+                                                                     end_date=end_time,
+                                                                     timezone=timezone,
+                                                                     lon=lon,
+                                                                     lat=lat)
+                    else:
+                        df_meteo = meteo_extractor.get_wheather_data(start_date=start_time,
+                                                                     end_date=end_time,
+                                                                     timezone=timezone,
+                                                                     place=city)
                 except Exception as e:
                     logging.error(str(e))
 
@@ -104,29 +114,17 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                     raise(e)
 
                 try:
-                    aws_s3.store_csv_s3(df = df_meteo,
-                                        folder=f'SolarEdge/{site}/WeatherData',
-                                        file_name=f'weather_data_{start_time}.csv')
+                    if len(df_meteo) > 0:
+                        aws_s3.store_csv_s3(df = df_meteo,
+                                            folder=f'SolarEdge/{site}/WeatherData',
+                                            file_name=f'weather_data_{start_time}.csv')
                 except Exception as e:
                     raise(e)
                 
                 start_time = end_time 
     return
 
-def equalize_fronius_dataframes(list_df:list) -> list:
-    final_dfs = []
-    cols = []
-    for df in list_df:
-        cols += list(df.columns)
-    tot_cols = list(set(cols))
-    for df in list_df:
-        cols_df = set(df.columns)
-        diff_cols = list(set(tot_cols).difference(cols_df))
-        if len(diff_cols) > 0:
-            for cd in diff_cols:
-                df[cd] = None
-        final_dfs.append(df[tot_cols])
-    return final_dfs
+
 
 
 
@@ -135,8 +133,25 @@ def store_fronius_inverter_data_to_S3(sites:dict,
                                       meteo_credentials:dict,
                                       aws_secret_key:str,
                                       aws_access_key_id: str,
+                                      coordinates:dict,
                                       start_time:datetime = None,
                                       end_time:datetime = None):
+    
+    def equalize_fronius_dataframes(list_df:list) -> list:
+        final_dfs = []
+        cols = []
+        for df in list_df:
+            cols += list(df.columns)
+        tot_cols = list(set(cols))
+        for df in list_df:
+            cols_df = set(df.columns)
+            diff_cols = list(set(tot_cols).difference(cols_df))
+            if len(diff_cols) > 0:
+                for cd in diff_cols:
+                    df[cd] = None
+            final_dfs.append(df[tot_cols])
+        return final_dfs
+
     
     fronius_ext = FroniusExtractor(sites)
     meteo_extractor = MeteoExtractor(meteo_credentials)
@@ -214,19 +229,28 @@ def store_fronius_inverter_data_to_S3(sites:dict,
                                         [c for c in df_dev_details.columns if c not in ['datetime', 'pvSystemId']] +
                                         [c for c in df_inv_data.columns if c not in ['datetime', 'pvSystemId', 'deviceId']]]
                         
-                        # Extract meteo data
-                        df_meteo = meteo_extractor.get_whather_data(start_date=datetime.strptime(min(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
-                                                                    end_date=datetime.strptime(max(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
-                                                                    timezone=timezone,
-                                                                    place=city)
-                        
                         aws_s3.store_csv_s3(df = df_inv_data,
                                             folder=f'Fronius/{site}/PlantData',
                                             file_name=f'inverter_details_{start_time}_{d}.csv')
                         
-                        aws_s3.store_csv_s3(df = df_meteo,
-                                            folder=f'Fronius/{site}/WeatherData',
-                                            file_name=f'weather_data_{start_time}.csv')
+                        # Extract meteo data
+                        if site in coordinates.keys():
+                            df_meteo = meteo_extractor.get_wheather_data(start_date=datetime.strptime(min(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
+                                                                        end_date=datetime.strptime(max(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
+                                                                        timezone=timezone,
+                                                                        lon=coordinates[site]["lon"],
+                                                                        lat=coordinates[site]["lat"])
+                        else:
+
+                            df_meteo = meteo_extractor.get_wheather_data(start_date=datetime.strptime(min(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
+                                                                        end_date=datetime.strptime(max(df_inv['datetime']), '%Y-%m-%d %H:%M:%S'),
+                                                                        timezone=timezone,
+                                                                        place=city)
+
+                        if len(df_meteo) > 0:
+                            aws_s3.store_csv_s3(df = df_meteo,
+                                                folder=f'Fronius/{site}/WeatherData',
+                                                file_name=f'weather_data_{start_time}.csv')
 
                 except Exception as e:
                     logging.error(f"Couldn't store inverter data into S3 for for system={s}, device={d}, start_time={start_time}, end_time={end_time}")
@@ -235,9 +259,13 @@ def store_fronius_inverter_data_to_S3(sites:dict,
 
 
 def store_huaweii_inverter_data_to_S3(sites:dict,
+                                      meteo_credentials:dict,
                                       aws_secret_key:str,
                                       aws_access_key_id: str):
     extractor = HuaweiiExtractor(sites)
+    meteo_extractor = MeteoExtractor(meteo_credentials)
+    aws_s3 = AWS3Extractor(aws_secret_key=aws_secret_key,
+                           aws_access_key_id=aws_access_key_id)
     try:
         extractor.log_in()
     except Exception as e:
@@ -254,7 +282,6 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
         devices = extractor.get_device_list(plantCodes)
         df_devices = pd.DataFrame(devices)
         df_devices = df_devices[df_devices.devTypeId == 1]
-        df_devices = df_devices.drop(['latitude', 'longitude'], axis=1)
         df_devices.rename(columns={'stationCode':'plantCode'}, inplace=True)
     except Exception as e:
         logging.error(f'Failed calling Huaweii API get_device_list for plants {plantCodes}: {str(e)}')
@@ -263,134 +290,58 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
     df.rename(columns={'id': 'devId'}, inplace=True)
     
     for pl in range(len(df_plants)):
-        start_date = df_plants.loc[pl, 'gridConnectionDate']
         plant = df_plants.loc[pl, 'plantCode']
         site = df_plants.loc[pl, 'plantName']
-        start_date = datetime.strptime(start_date, "%Y-%m-%dT%H:%M:%S%z")
-        end_date = start_date + timedelta(days=3)
+        lon = df_plants.loc[pl, 'longitude']
+        lat = df_plants.loc[pl, 'latitude']
         devices = list(df[df['plantCode'] == plant]['devId'])
         devices = [str(d) for d in devices]
+
+        start_date = aws_s3.get_last_data_date(folder=f'Huaweii/{site}/PlantData')
+        if start_date == None:
+            start_date = df_plants.loc[pl, 'gridConnectionDate']
+        
+        start_date = datetime.strptime(start_date, "%Y-%m-%dT%H:%M:%S%z")
+        end_date = start_date + timedelta(days=3)
         
         while end_date <= datetime.now(end_date.tzinfo):
             start_time = int(start_date.timestamp() * 1000)
             end_time = int(end_date.timestamp() * 1000)
 
             try:
-                dev_data = extractor.get_device_data(devices, start_time, end_time)
-
-                df_data_tmp = json_normalize(dev_data['data'],
-                                             meta=['devId',
-                                                   'sn', 
-                                                   'collectTime', 
-                                                    ['dataItemMap', 'pv26_i'],
-                                                    ['dataItemMap', 'pv2_u'],
-                                                    ['dataItemMap', 'pv28_i'],
-                                                    ['dataItemMap', 'pv4_u'],
-                                                    ['dataItemMap', 'pv22_i'],
-                                                    ['dataItemMap', 'power_factor'],
-                                                    ['dataItemMap', 'pv6_u'],
-                                                    ['dataItemMap', 'pv24_i'],
-                                                    ['dataItemMap', 'mppt_total_cap'],
-                                                    ['dataItemMap', 'pv8_u'],
-                                                    ['dataItemMap', 'pv22_u'],
-                                                    ['dataItemMap', 'open_time'],
-                                                    ['dataItemMap', 'a_i'],
-                                                    ['dataItemMap', 'pv24_u'],
-                                                    ['dataItemMap', 'c_i'],
-                                                    ['dataItemMap', 'mppt_9_cap'],
-                                                    ['dataItemMap', 'pv20_u'],
-                                                    ['dataItemMap', 'pv19_u'],
-                                                    ['dataItemMap', 'pv15_u'],
-                                                    ['dataItemMap', 'a_u'],
-                                                    ['dataItemMap', 'reactive_power'],
-                                                    ['dataItemMap', 'pv17_u'],
-                                                    ['dataItemMap', 'c_u'],
-                                                    ['dataItemMap', 'mppt_8_cap'],
-                                                    ['dataItemMap', 'pv20_i'],
-                                                    ['dataItemMap', 'pv15_i'],
-                                                    ['dataItemMap', 'efficiency'],
-                                                    ['dataItemMap', 'pv17_i'],
-                                                    ['dataItemMap', 'pv11_i'],
-                                                    ['dataItemMap', 'pv13_i'],
-                                                    ['dataItemMap', 'pv11_u'],
-                                                    ['dataItemMap', 'mppt_power'],
-                                                    ['dataItemMap', 'pv13_u'],
-                                                    ['dataItemMap', 'close_time'],
-                                                    ['dataItemMap', 'pv19_i'],
-                                                    ['dataItemMap', 'mppt_7_cap'],
-                                                    ['dataItemMap', 'mppt_5_cap'],
-                                                    ['dataItemMap', 'pv27_u'],
-                                                    ['dataItemMap', 'pv2_i'],
-                                                    ['dataItemMap', 'active_power'],
-                                                    ['dataItemMap', 'pv4_i'],
-                                                    ['dataItemMap', 'pv6_i'],
-                                                    ['dataItemMap', 'pv8_i'],
-                                                    ['dataItemMap', 'mppt_6_cap'],
-                                                    ['dataItemMap', 'pv27_i'],
-                                                    ['dataItemMap', 'pv1_u'],
-                                                    ['dataItemMap', 'pv3_u'],
-                                                    ['dataItemMap', 'pv23_i'],
-                                                    ['dataItemMap', 'pv5_u'],
-                                                    ['dataItemMap', 'pv25_i'],
-                                                    ['dataItemMap', 'pv7_u'],
-                                                    ['dataItemMap', 'pv23_u'],
-                                                    ['dataItemMap', 'inverter_state'],
-                                                    ['dataItemMap', 'pv9_u'],
-                                                    ['dataItemMap', 'pv25_u'],
-                                                    ['dataItemMap', 'total_cap'],
-                                                    ['dataItemMap', 'b_i'],
-                                                    ['dataItemMap', 'mppt_3_cap'],
-                                                    ['dataItemMap', 'pv21_u'],
-                                                    ['dataItemMap', 'mppt_10_cap'],
-                                                    ['dataItemMap', 'pv16_u'],
-                                                    ['dataItemMap', 'pv18_u'],
-                                                    ['dataItemMap', 'temperature'],
-                                                    ['dataItemMap', 'bc_u'],
-                                                    ['dataItemMap', 'b_u'],
-                                                    ['dataItemMap', 'pv21_i'],
-                                                    ['dataItemMap', 'elec_freq'],
-                                                    ['dataItemMap', 'mppt_4_cap'],
-                                                    ['dataItemMap', 'pv16_i'],
-                                                    ['dataItemMap', 'pv18_i'],
-                                                    ['dataItemMap', 'day_cap'],
-                                                    ['dataItemMap', 'pv12_i'],
-                                                    ['dataItemMap', 'pv14_i'],
-                                                    ['dataItemMap', 'pv12_u'],
-                                                    ['dataItemMap', 'pv14_u'],
-                                                    ['dataItemMap', 'mppt_1_cap'],
-                                                    ['dataItemMap', 'pv10_u'],
-                                                    ['dataItemMap', 'pv1_i'],
-                                                    ['dataItemMap', 'pv26_u'],
-                                                    ['dataItemMap', 'pv3_i'],
-                                                    ['dataItemMap', 'pv28_u'],
-                                                    ['dataItemMap', 'mppt_2_cap'],
-                                                    ['dataItemMap', 'pv5_i'],
-                                                    ['dataItemMap', 'ab_u'],
-                                                    ['dataItemMap', 'ca_u'],
-                                                    ['dataItemMap', 'pv7_i'],
-                                                    ['dataItemMap', 'pv10_i'],
-                                                    ['dataItemMap', 'pv9_i']])
-                new_col_names = [c.replace('.', '_') for c in df_data_tmp.columns]
-                df_data_tmp.columns = new_col_names
+                df_dev_data = extractor.get_device_data_as_df(devices, start_time, end_time)
             except Exception as e:
                 logging.error(f'Failed calling Huaweii API get_device_data for devices {devices}: {str(e)}')
             
+            df_ = pd.merge(df, df_dev_data, on='devId', how='inner')
+
+            # Extract meto data
+            if (lon != None) & (lon != '1.000000') & (lat != None) & (lat != '1.000000') & (lon != '0.000000') & (lat != '0.000000'):
+                lat = lat + "N"
+                lon = str(abs(float(lon))) + "W"
+                df_meteo = meteo_extractor.get_wheather_data(start_date=start_date,
+                                                             end_date=end_date,
+                                                             lon=lon,
+                                                             lat=lat)
+            else:
+                df_meteo = pd.DataFrame()
+
             try:
-                df_data_tmp['Date'] = df_data_tmp['collectTime'].apply(lambda x: datetime.fromtimestamp(int(x)/1000))
-            except Exception as e:
-                print(e)
-            df_ = pd.merge(df, df_data_tmp, on='devId', how='inner')
-            try:
-                if len(df_data_tmp) >  0:
-                    df_.to_csv(f"s3://prod-satia-raw-data/{site}/inverter_details_{start_time}.csv",
-                               index=False,
-                               storage_options={"key" : aws_access_key_id,
-                                                "secret": aws_secret_key})
+                if len(df_dev_data) >  0:
+
+                    aws_s3.store_csv_s3(df = df_,
+                                        folder=f'Huaweii/{site}/PlantData',
+                                        file_name=f'inverter_details_{start_date.strftime("%Y-%m-%d %H:%M-%S")}_.csv')
                     
                     logging.info(f"Data stored into S3 for site={site}, start_time={start_time}, end_time={end_time}")
                 else:
                     logging.warning(f"No data retrieved for site={site}, start_time={start_time}, end_time={end_time}")
                 
+                if len(df_meteo) > 0:
+                    aws_s3.store_csv_s3(df = df_meteo,
+                                        folder=f'Huaweii/{site}/WeatherData',
+                                        file_name=f'weather_data_{start_date.strftime("%Y-%m-%d %H:%M-%S")}_.csv')
+
             except Exception as e:
                 logging.error(f"Couldn't store inverter data into S3 for site={site}, start_time={start_time}, end_time={end_time}")
                 raise(e)
@@ -401,23 +352,29 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
 def main(args: ArgumentParser) -> None:
     with open(args.config_file) as f:
         config = json.load(f)
+    
+    with open(args.coord_file) as f:
+        coord = json.load(f)
 
     if args.api == 'solaredge':
         store_solaredge_inverter_data_to_S3(sites=config["SOLAREDGE"],
                                             meteo_credentials=config["METEOSOURCE"],
+                                            coordinates=coord["SOLAREDGE"],
                                             aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
                                             aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
     
     elif args.api == 'fronius':
         store_fronius_inverter_data_to_S3(sites=config["FRONIUS"],
                                           meteo_credentials=config["METEOSOURCE"],
+                                          coordinates=coord["FRONIUS"],
                                           aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
                                           aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
     elif args.api == 'huaweii':
         store_huaweii_inverter_data_to_S3(sites = config["HUAWEII"],
+                                          meteo_credentials = config["METEOSOURCE"],
                                           aws_secret_key=config["AWS_SECRET_ACCESS_KEY"],
                                           aws_access_key_id=config["AWS_ACCESS_KEY_ID"])
-        print('Done')
+    print('Done')
     
 
 
@@ -434,10 +391,15 @@ if __name__ == "__main__":
                         required=False,
                         default=os.path.join(os.getcwd(), 'config.json'))
     
+    parser.add_argument('--coord_file',
+                        type=str,
+                        required=False,
+                        default=os.path.join(os.getcwd(), 'coordinates.json'))
+
     parser.add_argument('--api',
                         type=str,
                         required=False,
-                        default='solaredge',
+                        default='huaweii',
                         choices=['huaweii', 'fronius', 'solaredge'])
     
     args = parser.parse_args()
