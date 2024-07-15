@@ -57,7 +57,7 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
         for j in range(len(df_components)):
             serial_number = df_components.loc[j,'component_id']
     
-            start_time = aws_s3.get_last_data_date(folder=f'SolarEdge/{site}/PlantData')
+            start_time = aws_s3.get_last_data_date(folder=f'SolarEdge/{site.upper()}/PlantData')
             if start_time == None:
                 start_time = installation_date
             
@@ -82,9 +82,9 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                     logging.error(str(e))
 
                 try:
-                    df_inv_data = solaredge_extr.get_inverter_data(serial_number=serial_number,
-                                                                   start_time=start_time,
-                                                                   end_time=end_time)
+                    df_inv_data = solaredge_extr.get_inverter_data_as_df(serial_number=serial_number,
+                                                                         start_time=start_time,
+                                                                         end_time=end_time)
                     
                     logging.info(f"Extracted SolarEdge API get_inverter_data method for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
                 except Exception as e:
@@ -102,7 +102,7 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                 try:
                     if len(df_inv_data) >  0:
                         aws_s3.store_csv_s3(df = df_inv_data,
-                                            folder=f'SolarEdge/{site}/PlantData',
+                                            folder=f'SolarEdge/{site.upper()}/PlantData',
                                             file_name=f'inverter_details_{start_time}_{serial_number}.csv')
                         
                         logging.info(f"Data stored into S3 for site={site}, serial_number={serial_number}, start_time={start_time}, end_time={end_time}")
@@ -116,7 +116,7 @@ def store_solaredge_inverter_data_to_S3(sites:dict,
                 try:
                     if len(df_meteo) > 0:
                         aws_s3.store_csv_s3(df = df_meteo,
-                                            folder=f'SolarEdge/{site}/WeatherData',
+                                            folder=f'SolarEdge/{site.upper()}/WeatherData',
                                             file_name=f'weather_data_{start_time}.csv')
                 except Exception as e:
                     raise(e)
@@ -164,12 +164,7 @@ def store_fronius_inverter_data_to_S3(sites:dict,
         logging.error('Failed calling Fronius API get_pv_systems_and_components')
         raise e
     
-    ################### This is just for testing purposes ####################################
-    df_pvs = df_pvs[(df_pvs['pvSystemIds'] == '25c1b557-5621-4cb8-9d2b-84907c324aab') &
-                    (df_pvs['deviceIds'] == 'f62a7b80-2686-4d49-b0fa-afc100bd4c95')]
-
-    ##########################################################################################
-
+    
     for s, d in zip(df_pvs['pvSystemIds'], df_pvs['deviceIds']):
         # Get PV System details
         try:
@@ -191,7 +186,7 @@ def store_fronius_inverter_data_to_S3(sites:dict,
             logging.error(f'Failed calling Fronius API get_device_details method for pv_system={s} and device_id={d}')
 
 
-        start_time = aws_s3.get_last_data_date(folder=f'Fronius/{site}/PlantData')
+        start_time = aws_s3.get_last_data_date(folder=f'Fronius/{site.upper()}/PlantData')
         if start_time == None:
             start_time = installation_date
         days = 0
@@ -230,7 +225,7 @@ def store_fronius_inverter_data_to_S3(sites:dict,
                                         [c for c in df_inv_data.columns if c not in ['datetime', 'pvSystemId', 'deviceId']]]
                         
                         aws_s3.store_csv_s3(df = df_inv_data,
-                                            folder=f'Fronius/{site}/PlantData',
+                                            folder=f'Fronius/{site.upper()}/PlantData',
                                             file_name=f'inverter_details_{start_time}_{d}.csv')
                         
                         # Extract meteo data
@@ -249,7 +244,7 @@ def store_fronius_inverter_data_to_S3(sites:dict,
 
                         if len(df_meteo) > 0:
                             aws_s3.store_csv_s3(df = df_meteo,
-                                                folder=f'Fronius/{site}/WeatherData',
+                                                folder=f'Fronius/{site.upper()}/WeatherData',
                                                 file_name=f'weather_data_{start_time}.csv')
 
                 except Exception as e:
@@ -297,7 +292,7 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
         devices = list(df[df['plantCode'] == plant]['devId'])
         devices = [str(d) for d in devices]
 
-        start_date = aws_s3.get_last_data_date(folder=f'Huaweii/{site}/PlantData')
+        start_date = aws_s3.get_last_data_date(folder=f'Huaweii/{site.upper()}/PlantData')
         if start_date == None:
             start_date = df_plants.loc[pl, 'gridConnectionDate']
         
@@ -330,7 +325,7 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
                 if len(df_dev_data) >  0:
 
                     aws_s3.store_csv_s3(df = df_,
-                                        folder=f'Huaweii/{site}/PlantData',
+                                        folder=f'Huaweii/{site.upper()}/PlantData',
                                         file_name=f'inverter_details_{start_date.strftime("%Y-%m-%d %H:%M-%S")}_.csv')
                     
                     logging.info(f"Data stored into S3 for site={site}, start_time={start_time}, end_time={end_time}")
@@ -339,7 +334,7 @@ def store_huaweii_inverter_data_to_S3(sites:dict,
                 
                 if len(df_meteo) > 0:
                     aws_s3.store_csv_s3(df = df_meteo,
-                                        folder=f'Huaweii/{site}/WeatherData',
+                                        folder=f'Huaweii/{site.upper()}/WeatherData',
                                         file_name=f'weather_data_{start_date.strftime("%Y-%m-%d %H:%M-%S")}_.csv')
 
             except Exception as e:
@@ -399,7 +394,7 @@ if __name__ == "__main__":
     parser.add_argument('--api',
                         type=str,
                         required=False,
-                        default='huaweii',
+                        default='solaredge',
                         choices=['huaweii', 'fronius', 'solaredge'])
     
     args = parser.parse_args()
