@@ -58,10 +58,16 @@ class MeteoExtractor(object):
                          place:str = None) -> pd.DataFrame:
         
         if (lon == None) or (lat == None):
-            coordinates = self.get_coordinates(place=place, 
-                                               timezone=timezone)
-            lon = coordinates['lon']
-            lat = coordinates['lat']
+            try:
+                coordinates = self.get_coordinates(place=place, 
+                                                   timezone=timezone)
+                lon = coordinates['lon']
+                lat = coordinates['lat']
+            except Exception as e:
+                coordinates = self.get_coordinates(place='Granada', 
+                                                   timezone=timezone)
+                lon = coordinates['lon']
+                lat = coordinates['lat']
         
         df_w = pd.DataFrame()
 
