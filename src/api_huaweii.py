@@ -1,7 +1,9 @@
 import requests
 import json
 from typing import List
-
+import pandas as pd
+from pandas import json_normalize
+from datetime import datetime
 
 class HuaweiiExtractor(object):
     def __init__(self, config:dict, intl:str = 'eu5'):
@@ -78,10 +80,33 @@ class HuaweiiExtractor(object):
                 
             res_data = json.loads(res.content)
             if res_data['success'] == True:
-                return res_data
+                return res_data['data']
         except requests.exceptions.RequestException as e:
             raise e
-        return
+    
+    def get_device_data_as_df(self, 
+                              devices:List[str], 
+                              start_time:int, 
+                              end_time:int):
+        dev_data = self.get_device_data(devices=devices,
+                                        start_time=start_time,
+                                        end_time=end_time)
+        
+        meta = []
+        for i in range(len(dev_data)):
+            cols = ['devId','sn', 'collectTime'] + [f'dataItemMap__{c}' for c in dev_data[i]['dataItemMap'].keys()]
+            meta = list(set(meta).union(set(cols)))
+
+        meta = [c.split('__') for c in meta]
+        df_data_dev = json_normalize(data=dev_data,
+                                     meta=meta)
+        
+        df_data_dev.columns = [c.replace('.', '_') for c in df_data_dev.columns]
+        df_data_dev['datetime'] = df_data_dev['collectTime'].apply(lambda x: datetime.fromtimestamp(int(x)/1000))
+        
+        return df_data_dev
+    
+    
     
 
 
