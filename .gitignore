@@ -1,0 +1,6 @@
+env
+config.json
+coordinates.json
+*.csv
+*.pyc
+*.log
